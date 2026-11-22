@@ -20,7 +20,8 @@ use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, InputEvent, KeyCode, RelativeAxisCode};
 use serde_json::{Value, json};
 use std::collections::HashSet;
-use std::os::fd::AsRawFd;
+use std::os::fd::{AsRawFd, OwnedFd};
+use std::os::unix::fs::OpenOptionsExt;
 use std::sync::Mutex;
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -170,10 +171,29 @@ impl VirtualInput {
 
 // ---------------------------------------------------------------- recording
 
+/// Opens every /dev/input/event* node read-only and non-blocking: recording only reads,
+/// so it never asks for more access than it needs (evdev's own enumerate opens read/write).
+fn open_all_read_only() -> Vec<RawDevice> {
+    let Ok(entries) = std::fs::read_dir("/dev/input") else { return Vec::new() };
+    entries
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("event"))
+        .filter_map(|e| {
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NONBLOCK | libc::O_CLOEXEC)
+                .open(e.path())
+                .ok()?;
+            RawDevice::from_fd(OwnedFd::from(file)).ok()
+        })
+        .collect()
+}
+
 /// Opens every evdev device that looks like a keyboard (or a mouse, when asked).
 fn open_devices(mouse: bool) -> Vec<(String, RawDevice)> {
-    let mut found: Vec<(String, RawDevice)> = evdev::raw_stream::enumerate()
-        .filter_map(|(_, device)| {
+    let mut found: Vec<(String, RawDevice)> = open_all_read_only()
+        .into_iter()
+        .filter_map(|device| {
             let name = device.name().unwrap_or("").to_owned();
             if name.starts_with(VIRTUAL_PREFIX) {
                 return None;
@@ -183,24 +203,14 @@ fn open_devices(mouse: bool) -> Vec<(String, RawDevice)> {
             let rels = device.supported_relative_axes();
             let has_rel = |c: u16| rels.is_some_and(|r| r.contains(RelativeAxisCode(c)));
             // A keyboard has at least a few letter keys; a mouse has X/Y axes and a left button.
-            let is_keyboard = has_key(KeyCode::KEY_A) && has_key(KeyCode::KEY_SPACE) && has_key(KeyCode::KEY_ENTER);
+            let is_keyboard =
+                has_key(KeyCode::KEY_A) && has_key(KeyCode::KEY_SPACE) && has_key(KeyCode::KEY_ENTER);
             let is_mouse = has_rel(REL_X) && has_rel(REL_Y) && has_key(KeyCode::BTN_LEFT);
             (is_keyboard || (mouse && is_mouse)).then_some((name, device))
         })
         .collect();
     found.sort_by(|a, b| a.0.cmp(&b.0));
     found
-}
-
-fn set_nonblocking(device: &RawDevice) {
-    let fd = device.as_raw_fd();
-    // SAFETY: plain fcntl calls on a file descriptor owned by `device`.
-    unsafe {
-        let flags = libc::fcntl(fd, libc::F_GETFL);
-        if flags >= 0 {
-            libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK);
-        }
-    }
 }
 
 pub struct RecorderHandle {
@@ -227,14 +237,13 @@ pub fn start_recording(
     log!("recording on {names:?}");
     let stop = StopRequest::default();
     let thread_stop = stop.clone();
-    std::thread::spawn(move || record_loop(devices, RecorderCore::new(options, on_event, on_stop), thread_stop));
+    std::thread::spawn(move || {
+        record_loop(devices, RecorderCore::new(options, on_event, on_stop), thread_stop)
+    });
     Ok((RecorderHandle { stop }, names))
 }
 
 fn record_loop(mut devices: Vec<(String, RawDevice)>, mut core: RecorderCore, stop: StopRequest) {
-    for (_, device) in &devices {
-        set_nonblocking(device);
-    }
     while !stop.is_requested() && !devices.is_empty() {
         let mut fds: Vec<libc::pollfd> = devices
             .iter()
@@ -280,7 +289,7 @@ fn record_loop(mut devices: Vec<(String, RawDevice)>, mut core: RecorderCore, st
             devices.remove(index);
         }
     }
-    core.finish(stop.from_editor());
+    core.finish(stop.was_from_editor());
 }
 
 // ---------------------------------------------------------------- diagnostics
@@ -299,24 +308,24 @@ pub fn diagnostics() -> Vec<Value> {
         Err(e) => check("uinput", Some(false), format!("/dev/uinput: {e}")),
     });
 
-    let (mut total, mut denied) = (0, 0);
+    let (mut total, mut denied) = (0_u32, 0_u32);
     if let Ok(entries) = std::fs::read_dir("/dev/input") {
         for entry in entries.flatten() {
             if !entry.file_name().to_string_lossy().starts_with("event") {
                 continue;
             }
             total += 1;
-            if let Err(e) = std::fs::File::open(entry.path()) {
-                if e.kind() == std::io::ErrorKind::PermissionDenied {
-                    denied += 1;
-                }
+            if let Err(e) = std::fs::File::open(entry.path())
+                && e.kind() == std::io::ErrorKind::PermissionDenied
+            {
+                denied += 1;
             }
         }
     }
     checks.push(check(
         "eventAccess",
         Some(total > 0 && denied == 0),
-        format!("/dev/input/event*: {} of {total} readable", total - denied),
+        format!("/dev/input/event*: {} of {total} readable", total.saturating_sub(denied)),
     ));
 
     let keyboards: Vec<String> = open_devices(false).into_iter().map(|(n, _)| n).collect();

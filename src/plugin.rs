@@ -4,17 +4,17 @@
 //! codes, and the property inspector translates them.
 
 use crate::common::{
-    DEBUG, InputError, MacroEvent, Step, clear_log, log_path, open_folder, parse_steps, plugin_dir, read_log_tail,
-    shorten_for_log,
+    DEBUG, InputError, MacroEvent, Step, clear_log, log_path, open_folder, parse_steps, plugin_dir,
+    read_log_tail, shorten_for_log,
 };
 use crate::input::{RecorderHandle, VirtualInput, diagnostics, start_recording};
-use crate::{debug_log, log};
 use crate::recorder::RecordOptions;
+use crate::{debug_log, log};
 use base64::Engine;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
-use std::sync::mpsc::Sender;
 use std::sync::atomic::Ordering;
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -32,10 +32,20 @@ const SLOT_CCW: &str = "eventsCCW";
 /// Cap on queued dial notches, so a fast spin cannot run for minutes.
 const MAX_PENDING_TICKS: u32 = 50;
 
+/// Upper bound for any single wait (event delay, pause between repeats). Settings are
+/// user-editable: without it, a huge value would overflow the duration arithmetic.
+const MAX_DELAY: Duration = Duration::from_secs(3600);
+
+/// Converts a delay in milliseconds (scaled by the playback speed) to a bounded duration.
+fn bounded_delay(ms: f64, speed: f64) -> Duration {
+    Duration::try_from_secs_f64(ms.max(0.0) / 1000.0 / speed).map_or(MAX_DELAY, |d| d.min(MAX_DELAY))
+}
+
 /// How much of the log the About tab shows.
 const LOG_TAIL_BYTES: u64 = 48 * 1024;
 
-const STATE_ICONS: [&str; 3] = ["icons/state_idle@2x.png", "icons/state_play@2x.png", "icons/state_rec@2x.png"];
+const STATE_ICONS: [&str; 3] =
+    ["icons/state_idle@2x.png", "icons/state_play@2x.png", "icons/state_rec@2x.png"];
 
 /// Interruptible wait: playback sleeps on it so that a stop request is immediate.
 struct StopFlag {
@@ -157,9 +167,14 @@ impl Plugin {
 
     fn set_state(&self, context: &str, state: u8) {
         let mut st = self.lock();
+        self.set_state_locked(&mut st, context, state);
+    }
+
+    /// Same as `set_state`, for callers that already hold the state lock.
+    fn set_state_locked(&self, st: &mut State, context: &str, state: u8) {
         st.states.insert(context.to_owned(), state);
         self.send_event("setState", context, json!({"state": state}));
-        self.apply_image(&mut st, context);
+        self.apply_image(st, context);
     }
 
     /// Shows the custom image rendered by the property inspector for the current state,
@@ -213,7 +228,9 @@ impl Plugin {
             MacroEvent::Key { code, .. } => crate::common::is_mouse_button(code),
             _ => true,
         });
-        let needs_keyboard = steps.iter().any(|st| matches!(st.event, MacroEvent::Key { code, .. } if !crate::common::is_mouse_button(code)));
+        let needs_keyboard = steps.iter().any(
+            |st| matches!(st.event, MacroEvent::Key { code, .. } if !crate::common::is_mouse_button(code)),
+        );
         self.input.prepare(needs_keyboard, needs_mouse)?;
         // Absolute deadlines, so that the time spent sending input does not accumulate.
         debug_log!("play {} steps (speed {:.0}%, fixed delay: {use_fixed})", steps.len(), speed * 100.0);
@@ -223,7 +240,7 @@ impl Plugin {
             // theirs, otherwise a recorded gesture would become very slow.
             let is_move = matches!(step.event, MacroEvent::Move { .. });
             let delay = if use_fixed && i > 0 && !is_move { fixed } else { step.delay_ms };
-            deadline += Duration::from_secs_f64(delay / 1000.0 / speed);
+            deadline += bounded_delay(delay, speed);
             let wait = deadline.saturating_duration_since(Instant::now());
             if !wait.is_zero() && stop.wait(wait) {
                 return Ok(false);
@@ -259,12 +276,13 @@ impl Plugin {
             self.alert(context);
         }
         self.input.release_all();
-        {
-            let mut st = self.lock();
-            st.players.remove(context);
-            st.turns.remove(context);
-        }
-        self.set_state(context, STATE_IDLE);
+        // Unregister and reset the key under one lock: a new playback can only start once
+        // this one is gone, so its "playing" state cannot be overwritten by this "idle".
+        let mut st = self.lock();
+        st.players.remove(context);
+        st.turns.remove(context);
+        let recording = st.recording_ctx.as_deref() == Some(context);
+        self.set_state_locked(&mut st, context, if recording { STATE_RECORDING } else { STATE_IDLE });
         self.to_pi(context, json!({"type": "playing", "playing": false}));
     }
 
@@ -294,7 +312,7 @@ impl Plugin {
         let s = self.settings_of(context);
         let steps = parse_steps(&s[SLOT_PRESS]);
         let repeat = number(&s, "repeat").map(|v| v.max(0.0) as u64).unwrap_or(1); // 0 = loop
-        let repeat_delay = Duration::from_secs_f64(number(&s, "repeatDelay").unwrap_or(0.0).max(0.0) / 1000.0);
+        let repeat_delay = bounded_delay(number(&s, "repeatDelay").unwrap_or(0.0), 1.0);
         let mut n = 0;
         while !stop.is_set() && (repeat == 0 || n < repeat) {
             if n > 0 && stop.wait(repeat_delay) {
@@ -326,7 +344,8 @@ impl Plugin {
         if pending.slot != slot {
             *pending = PendingTurns { slot, notches: 0 }; // changing direction drops the other queue
         }
-        pending.notches = (pending.notches + ticks.unsigned_abs() as u32).min(MAX_PENDING_TICKS);
+        let added = u32::try_from(ticks.unsigned_abs()).unwrap_or(u32::MAX);
+        pending.notches = pending.notches.saturating_add(added).min(MAX_PENDING_TICKS);
         if player_kind.is_none() {
             self.start_player(&mut st, context, PlayerKind::Turn);
         }
@@ -354,15 +373,26 @@ impl Plugin {
 
     // ------------------------------------------------------------ recording
 
-    fn start_recording(self: &Arc<Self>, context: &str, append: bool, slot: &'static str, options: RecordOptions) {
+    fn start_recording(
+        self: &Arc<Self>,
+        context: &str,
+        append: bool,
+        slot: &'static str,
+        options: RecordOptions,
+    ) {
         let mut st = self.lock();
         if st.recorder.is_some() {
             drop(st);
             self.error(context, "already_recording", "");
             return;
         }
+        // A macro playing on this key would fight with the recording over the key state.
+        if let Some(player) = st.players.get(context) {
+            player.stop.set();
+        }
         let (this, ctx) = (self.clone(), context.to_owned());
-        let on_event = Box::new(move |ev: &Value| this.to_pi(&ctx, json!({"type": "recordEvent", "event": ev})));
+        let on_event =
+            Box::new(move |ev: &Value| this.to_pi(&ctx, json!({"type": "recordEvent", "event": ev})));
         let (this, ctx) = (self.clone(), context.to_owned());
         let on_stop = Box::new(move |events: Vec<Value>| this.finish_recording(&ctx, append, slot, events));
         // The state lock is held until the handle is stored, so finish_recording (another
@@ -429,10 +459,10 @@ impl Plugin {
 
         {
             let mut st = self.lock();
-            if event != "sendToPlugin" {
-                if let Some(settings) = payload.get("settings") {
-                    st.settings.insert(context.to_owned(), settings.clone());
-                }
+            if event != "sendToPlugin"
+                && let Some(settings) = payload.get("settings")
+            {
+                st.settings.insert(context.to_owned(), settings.clone());
             }
             if let Some(controller) = payload.get("controller").and_then(Value::as_str) {
                 st.controllers.insert(context.to_owned(), controller.to_owned());
@@ -567,5 +597,32 @@ impl Plugin {
             player.stop.set();
         }
         self.input.release_all();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delays_from_settings_are_bounded() {
+        assert_eq!(bounded_delay(120.0, 1.0), Duration::from_millis(120));
+        assert_eq!(bounded_delay(120.0, 2.0), Duration::from_millis(60)); // speed 200 %
+        assert_eq!(bounded_delay(-5.0, 1.0), Duration::ZERO);
+        assert_eq!(bounded_delay(1e300, 0.01), MAX_DELAY); // would overflow without the bound
+        assert_eq!(bounded_delay(f64::INFINITY, 1.0), MAX_DELAY);
+    }
+
+    #[test]
+    fn invalid_events_are_skipped() {
+        let steps = parse_steps(&json!([
+            {"code": 30, "down": true, "delay": 0},
+            {"code": "<img src=x>", "down": true},           // not a number
+            {"code": 70000, "down": true},                    // out of range
+            {"code": 31, "down": true, "disabled": true},     // disabled
+            {"type": "move", "dx": 1e12, "dy": -3, "delay": 8},
+        ]));
+        assert_eq!(steps.len(), 2);
+        assert!(matches!(steps[1].event, MacroEvent::Move { dx: i32::MAX, dy: -3 }));
     }
 }

@@ -2,6 +2,7 @@
 name = "keymacro"
 version = "2.0.0"
 edition = "2024"
+rust-version = "1.85" # first release with edition 2024
 description = "OpenDeck plugin: record, edit and replay keyboard and mouse macros"
 license = "CECILL-2.1"
 repository = "https://github.com/MrBretze/Keyboard-Macros"

@@ -32,8 +32,12 @@ type CFMachPortRef = *mut c_void;
 type CFRunLoopSourceRef = *mut c_void;
 type CFRunLoopRef = *mut c_void;
 type CFStringRef = *const c_void;
-type CGEventTapCallBack =
-    unsafe extern "C" fn(proxy: *mut c_void, kind: u32, event: CGEventRef, user_info: *mut c_void) -> CGEventRef;
+type CGEventTapCallBack = unsafe extern "C" fn(
+    proxy: *mut c_void,
+    kind: u32,
+    event: CGEventRef,
+    user_info: *mut c_void,
+) -> CGEventRef;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -47,7 +51,12 @@ unsafe extern "C" {
     fn CGEventSourceCreate(state: i32) -> CGEventSourceRef;
     fn CGEventCreate(source: CGEventSourceRef) -> CGEventRef;
     fn CGEventCreateKeyboardEvent(source: CGEventSourceRef, keycode: u16, key_down: bool) -> CGEventRef;
-    fn CGEventCreateMouseEvent(source: CGEventSourceRef, kind: u32, position: CGPoint, button: u32) -> CGEventRef;
+    fn CGEventCreateMouseEvent(
+        source: CGEventSourceRef,
+        kind: u32,
+        position: CGPoint,
+        button: u32,
+    ) -> CGEventRef;
     fn CGEventCreateScrollWheelEvent2(
         source: CGEventSourceRef,
         units: u32,
@@ -80,7 +89,11 @@ unsafe extern "C" {
 #[link(name = "CoreFoundation", kind = "framework")]
 unsafe extern "C" {
     static kCFRunLoopDefaultMode: CFStringRef;
-    fn CFMachPortCreateRunLoopSource(allocator: *const c_void, port: CFMachPortRef, order: isize) -> CFRunLoopSourceRef;
+    fn CFMachPortCreateRunLoopSource(
+        allocator: *const c_void,
+        port: CFMachPortRef,
+        order: isize,
+    ) -> CFRunLoopSourceRef;
     fn CFMachPortInvalidate(port: CFMachPortRef);
     fn CFRunLoopGetCurrent() -> CFRunLoopRef;
     fn CFRunLoopAddSource(run_loop: CFRunLoopRef, source: CFRunLoopSourceRef, mode: CFStringRef);
@@ -132,6 +145,7 @@ const FLAG_COMMAND: u64 = 0x0010_0000;
 // ---------------------------------------------------------------- key mapping
 
 /// evdev code -> macOS virtual key code (kVK_*).
+#[rustfmt::skip] // aligned table, one key per column
 const KEYS: &[(u16, u16)] = &[
     (1, 0x35),                                                                // ESC
     (2, 0x12), (3, 0x13), (4, 0x14), (5, 0x15), (6, 0x17),                    // 1-5
@@ -353,7 +367,9 @@ impl VirtualInput {
         // Macro format: dy > 0 = up, dx > 0 = right. CoreGraphics: axis 1 positive scrolls
         // up, axis 2 positive scrolls left, hence -dx.
         // SAFETY: creates a two-axis scroll event, in lines.
-        post(unsafe { CGEventCreateScrollWheelEvent2(inner.src(), SCROLL_UNIT_LINE, 2, dy, -dx, 0) })
+        post(unsafe {
+            CGEventCreateScrollWheelEvent2(inner.src(), SCROLL_UNIT_LINE, 2, dy, dx.saturating_neg(), 0)
+        })
     }
 
     /// Status line for the About tab.
@@ -389,7 +405,12 @@ fn now_secs() -> f64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
-unsafe extern "C" fn tap_callback(_proxy: *mut c_void, kind: u32, event: CGEventRef, _info: *mut c_void) -> CGEventRef {
+unsafe extern "C" fn tap_callback(
+    _proxy: *mut c_void,
+    kind: u32,
+    event: CGEventRef,
+    _info: *mut c_void,
+) -> CGEventRef {
     TAP_STATE.with(|cell| {
         let mut guard = cell.borrow_mut();
         let Some(s) = guard.as_mut() else { return };
@@ -405,14 +426,16 @@ unsafe extern "C" fn tap_callback(_proxy: *mut c_void, kind: u32, event: CGEvent
             let t = now_secs();
             match kind {
                 KEY_DOWN | KEY_UP => {
-                    let keycode = CGEventGetIntegerValueField(event, FIELD_KEYCODE) as u16;
+                    let keycode =
+                        u16::try_from(CGEventGetIntegerValueField(event, FIELD_KEYCODE)).unwrap_or(u16::MAX);
                     if let Some(code) = mac_to_evdev(keycode) {
                         s.core.feed_key(code, kind == KEY_DOWN, t);
                     }
                 }
                 FLAGS_CHANGED => {
                     // Modifier keys only report "flags changed": compare with what was down.
-                    let keycode = CGEventGetIntegerValueField(event, FIELD_KEYCODE) as u16;
+                    let keycode =
+                        u16::try_from(CGEventGetIntegerValueField(event, FIELD_KEYCODE)).unwrap_or(u16::MAX);
                     let Some(code) = mac_to_evdev(keycode) else { return };
                     if keycode == 0x39 {
                         // Caps Lock reports each toggle once: record it as a full tap.
@@ -446,8 +469,8 @@ unsafe extern "C" fn tap_callback(_proxy: *mut c_void, kind: u32, event: CGEvent
                     s.core.feed_key(code, down, t);
                 }
                 SCROLL_WHEEL => {
-                    let dy = CGEventGetIntegerValueField(event, FIELD_SCROLL_AXIS1) as i32;
-                    let dx = -(CGEventGetIntegerValueField(event, FIELD_SCROLL_AXIS2) as i32);
+                    let axis = |field| i32::try_from(CGEventGetIntegerValueField(event, field)).unwrap_or(0);
+                    let (dy, dx) = (axis(FIELD_SCROLL_AXIS1), axis(FIELD_SCROLL_AXIS2).saturating_neg());
                     s.core.feed_wheel(dx, dy, t);
                 }
                 _ => {}
@@ -497,7 +520,14 @@ pub fn start_recording(
         // SAFETY: the tap, its run loop source and the thread-local state are created,
         // used and released on this thread only.
         unsafe {
-            let tap = CGEventTapCreate(SESSION_EVENT_TAP, HEAD_INSERT, LISTEN_ONLY, events_mask, tap_callback, std::ptr::null_mut());
+            let tap = CGEventTapCreate(
+                SESSION_EVENT_TAP,
+                HEAD_INSERT,
+                LISTEN_ONLY,
+                events_mask,
+                tap_callback,
+                std::ptr::null_mut(),
+            );
             if tap.is_null() {
                 let _ = ready_tx.send(Err("CGEventTapCreate failed".to_owned()));
                 return;
@@ -525,7 +555,7 @@ pub fn start_recording(
             CFRelease(source);
             CFRelease(tap);
             if let Some(mut state) = TAP_STATE.with(|s| s.borrow_mut().take()) {
-                state.core.finish(thread_stop.from_editor());
+                state.core.finish(thread_stop.was_from_editor());
             }
         }
     });

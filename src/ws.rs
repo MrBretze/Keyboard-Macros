@@ -19,10 +19,7 @@ pub fn connect(port: u16) -> Result<(Sender<String>, Receiver<String>), String> 
     let (mut socket, _) =
         tungstenite::client(format!("ws://127.0.0.1:{port}"), stream).map_err(|e| e.to_string())?;
     // Short read timeout: the thread alternates between reading and sending.
-    socket
-        .get_mut()
-        .set_read_timeout(Some(Duration::from_millis(10)))
-        .map_err(|e| e.to_string())?;
+    socket.get_mut().set_read_timeout(Some(Duration::from_millis(10))).map_err(|e| e.to_string())?;
 
     let (out_tx, out_rx) = mpsc::channel::<String>();
     let (in_tx, in_rx) = mpsc::channel::<String>();

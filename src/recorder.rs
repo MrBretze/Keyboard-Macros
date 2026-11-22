@@ -13,6 +13,9 @@ use std::sync::atomic::{AtomicU8, Ordering};
 /// second, which would make huge, unreadable macros.
 const MOVE_MERGE_WINDOW: f64 = 0.012; // seconds
 
+/// A recording left running cannot grow without limit: extra events are dropped.
+const MAX_EVENTS: usize = 100_000;
+
 #[derive(Debug, Clone, Copy)]
 pub struct RecordOptions {
     pub mouse: bool,
@@ -36,7 +39,7 @@ impl StopRequest {
     pub fn is_requested(&self) -> bool {
         self.0.load(Ordering::SeqCst) != 0
     }
-    pub fn from_editor(&self) -> bool {
+    pub fn was_from_editor(&self) -> bool {
         self.0.load(Ordering::SeqCst) == 2
     }
 }
@@ -50,6 +53,7 @@ pub struct RecorderCore {
     last_t: Option<f64>,
     /// Pending merged movement: (dx, dy, first_t, last_t).
     pending_move: Option<(i32, i32, f64, f64)>,
+    limit_reached: bool,
 }
 
 fn is_type(ev: &Value, kind: &str) -> bool {
@@ -66,10 +70,18 @@ impl RecorderCore {
             held: Vec::new(),
             last_t: None,
             pending_move: None,
+            limit_reached: false,
         }
     }
 
     fn emit(&mut self, mut ev: Value, t: f64) {
+        if self.events.len() >= MAX_EVENTS {
+            if !self.limit_reached {
+                self.limit_reached = true;
+                crate::log!("recording limit reached ({MAX_EVENTS} events): further input is ignored");
+            }
+            return;
+        }
         let delay = match self.last_t {
             Some(last) => ((t - last) * 1000.0).round().max(0.0) as u64,
             None => 0,
@@ -81,10 +93,10 @@ impl RecorderCore {
     }
 
     fn flush_move(&mut self) {
-        if let Some((dx, dy, _, last_t)) = self.pending_move.take() {
-            if dx != 0 || dy != 0 {
-                self.emit(json!({"type": "move", "dx": dx, "dy": dy}), last_t);
-            }
+        if let Some((dx, dy, _, last_t)) = self.pending_move.take()
+            && (dx != 0 || dy != 0)
+        {
+            self.emit(json!({"type": "move", "dx": dx, "dy": dy}), last_t);
         }
     }
 
@@ -114,8 +126,8 @@ impl RecorderCore {
             return;
         }
         let pending = self.pending_move.get_or_insert((0, 0, t, t));
-        pending.0 += dx;
-        pending.1 += dy;
+        pending.0 = pending.0.saturating_add(dx);
+        pending.1 = pending.1.saturating_add(dy);
         pending.3 = t;
         if t - pending.2 >= MOVE_MERGE_WINDOW {
             self.flush_move();
@@ -214,14 +226,14 @@ mod tests {
         r.feed_move(1, 0, 0.52);
         r.feed_key(BTN_LEFT, false, 0.55);
         r.finish(editor_stop);
-        let events = out.lock().unwrap().clone();
-        events
+        out.lock().unwrap().clone()
     }
 
     #[test]
     fn keyboard_only_ignores_mouse_and_repeats() {
         let evs = run(false, true, false);
-        let codes: Vec<_> = evs.iter().map(|e| (e["code"].as_u64().unwrap(), e["down"].as_bool().unwrap())).collect();
+        let codes: Vec<_> =
+            evs.iter().map(|e| (e["code"].as_u64().unwrap(), e["down"].as_bool().unwrap())).collect();
         assert_eq!(codes, vec![(30, true), (30, false), (57, true), (57, false)]);
         assert_eq!(evs[1]["delay"], 50);
     }
@@ -230,7 +242,9 @@ mod tests {
     fn moves_are_merged_without_losing_distance() {
         let evs = run(true, true, false);
         let moves: Vec<_> = evs.iter().filter(|e| is_type(e, "move")).collect();
-        let (dx, dy): (i64, i64) = moves.iter().fold((0, 0), |a, e| (a.0 + e["dx"].as_i64().unwrap(), a.1 + e["dy"].as_i64().unwrap()));
+        let (dx, dy): (i64, i64) = moves
+            .iter()
+            .fold((0, 0), |a, e| (a.0 + e["dx"].as_i64().unwrap(), a.1 + e["dy"].as_i64().unwrap()));
         assert_eq!((dx, dy), (40 + 51, 20 + 20));
         assert!(moves.len() < 20, "movement reports should be merged");
     }
@@ -247,7 +261,8 @@ mod tests {
     fn editor_stop_drops_the_stop_click() {
         let evs = run(true, true, true);
         // Ends with: Space down (57), then its automatic release; the final click and moves are gone.
-        let tail: Vec<_> = evs.iter().rev().take(2).map(|e| (e["code"].as_u64(), e["down"].as_bool())).collect();
+        let tail: Vec<_> =
+            evs.iter().rev().take(2).map(|e| (e["code"].as_u64(), e["down"].as_bool())).collect();
         assert_eq!(tail, vec![(Some(57), Some(false)), (Some(57), Some(true))]);
     }
 }

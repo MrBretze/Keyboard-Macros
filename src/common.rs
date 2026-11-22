@@ -10,8 +10,8 @@ use serde_json::Value;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
 use std::sync::OnceLock;
+use std::sync::atomic::AtomicBool;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Prefix of our virtual devices' names, so the recorder can ignore our own output.
@@ -134,10 +134,10 @@ pub fn read_log_tail(max_bytes: u64) -> String {
     let Ok(bytes) = std::fs::read(log_path()) else { return String::new() };
     let start = bytes.len().saturating_sub(max_bytes as usize);
     let mut tail = &bytes[start..];
-    if start > 0 {
-        if let Some(newline) = tail.iter().position(|&b| b == b'\n') {
-            tail = &tail[newline + 1..];
-        }
+    if start > 0
+        && let Some(newline) = tail.iter().position(|&b| b == b'\n')
+    {
+        tail = &tail[newline + 1..];
     }
     String::from_utf8_lossy(tail).into_owned()
 }
@@ -193,4 +193,26 @@ macro_rules! debug_log {
             $crate::common::write_log(&format!("[debug] {}", format!($($arg)*)))
         }
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn log_lines_do_not_contain_image_data() {
+        let line = r#"{"image":"data:image/png;base64,AAAABBBBCCCC","state":0}"#;
+        let short = shorten_for_log(line);
+        assert!(!short.contains("AAAA"), "{short}");
+        assert!(short.contains("data:image/png;…"), "{short}");
+        assert!(short.contains(r#""state":0"#), "{short}");
+    }
+
+    #[test]
+    fn keyboard_and_mouse_codes() {
+        assert!(is_keyboard_code(30));
+        assert!(!is_keyboard_code(BTN_LEFT));
+        assert!(is_mouse_button(BTN_LEFT));
+        assert!(!is_keyboard_code(0));
+    }
 }

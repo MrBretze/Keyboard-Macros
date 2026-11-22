@@ -44,6 +44,7 @@ const VK_NUMLOCK: u32 = 0x90;
 const DIRECT_SCAN_MAX: u16 = 88;
 
 /// evdev code -> (scan code, extended) for keys that differ from the plain scan code.
+#[rustfmt::skip] // aligned table, one key per column
 const SCAN_EXT: &[(u16, u16, bool)] = &[
     (69, 0x45, true),   // NUMLOCK (reported as extended by Windows)
     (96, 0x1C, true),   // KPENTER
@@ -73,6 +74,7 @@ const SCAN_EXT: &[(u16, u16, bool)] = &[
 
 /// evdev code -> virtual-key code, for keys that are only reliable as virtual keys.
 /// Not supported on Windows (no standard key): BRIGHTNESSDOWN (224), BRIGHTNESSUP (225).
+#[rustfmt::skip] // aligned table, one key per column
 const VK_KEYS: &[(u16, u16)] = &[
     (113, 0xAD), // MUTE
     (114, 0xAE), // VOLUMEDOWN
@@ -157,7 +159,9 @@ fn mouse_input(flags: MOUSE_EVENT_FLAGS, data: i32) -> INPUT {
 fn keyboard_input(vk: u16, scan: u16, flags: KEYBD_EVENT_FLAGS) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk, wScan: scan, dwFlags: flags, time: 0, dwExtraInfo: 0 } },
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT { wVk: vk, wScan: scan, dwFlags: flags, time: 0, dwExtraInfo: 0 },
+        },
     }
 }
 
@@ -209,7 +213,7 @@ impl VirtualInput {
         // SAFETY: valid pointer to a POINT; plain cursor calls.
         unsafe {
             GetCursorPos(&mut pt);
-            SetCursorPos(pt.x + dx, pt.y + dy);
+            SetCursorPos(pt.x.saturating_add(dx), pt.y.saturating_add(dy));
         }
         Ok(())
     }
@@ -217,10 +221,10 @@ impl VirtualInput {
     pub fn wheel(&self, dx: i32, dy: i32) -> Result<(), InputError> {
         let _guard = self.pressed.lock().unwrap();
         if dy != 0 {
-            send(mouse_input(MOUSEEVENTF_WHEEL, dy * WHEEL_DELTA))?;
+            send(mouse_input(MOUSEEVENTF_WHEEL, dy.saturating_mul(WHEEL_DELTA)))?;
         }
         if dx != 0 {
-            send(mouse_input(MOUSEEVENTF_HWHEEL, dx * WHEEL_DELTA))?;
+            send(mouse_input(MOUSEEVENTF_HWHEEL, dx.saturating_mul(WHEEL_DELTA)))?;
         }
         Ok(())
     }
@@ -264,11 +268,11 @@ unsafe extern "system" fn keyboard_proc(n_code: i32, w_param: WPARAM, l_param: L
     if n_code == 0 && matches!(message, WM_KEYDOWN | WM_KEYUP | WM_SYSKEYDOWN | WM_SYSKEYUP) {
         // SAFETY: for WH_KEYBOARD_LL, lParam points to a KBDLLHOOKSTRUCT.
         let k = unsafe { &*(l_param as *const KBDLLHOOKSTRUCT) };
-        if k.flags & LLKHF_INJECTED == 0 {
-            if let Some(code) = windows_to_evdev(k.vkCode, k.scanCode, k.flags & LLKHF_EXTENDED != 0) {
-                let down = matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN);
-                with_state(|s| s.core.feed_key(code, down, f64::from(k.time) / 1000.0));
-            }
+        if k.flags & LLKHF_INJECTED == 0
+            && let Some(code) = windows_to_evdev(k.vkCode, k.scanCode, k.flags & LLKHF_EXTENDED != 0)
+        {
+            let down = matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN);
+            with_state(|s| s.core.feed_key(code, down, f64::from(k.time) / 1000.0));
         }
     }
     // SAFETY: forwards the event to the next hook, as required.
@@ -285,7 +289,7 @@ unsafe extern "system" fn mouse_proc(n_code: i32, w_param: WPARAM, l_param: LPAR
             with_state(|s| match w_param as u32 {
                 WM_MOUSEMOVE => {
                     if let Some((x, y)) = s.last_pt {
-                        s.core.feed_move(m.pt.x - x, m.pt.y - y, t);
+                        s.core.feed_move(m.pt.x.saturating_sub(x), m.pt.y.saturating_sub(y), t);
                     }
                     s.last_pt = Some((m.pt.x, m.pt.y));
                 }
@@ -301,10 +305,11 @@ unsafe extern "system" fn mouse_proc(n_code: i32, w_param: WPARAM, l_param: LPAR
                 }
                 msg @ (WM_MOUSEWHEEL | WM_MOUSEHWHEEL) => {
                     let axis = usize::from(msg == WM_MOUSEWHEEL);
-                    s.wheel_rest[axis] += high;
+                    s.wheel_rest[axis] = s.wheel_rest[axis].saturating_add(high);
                     let notches = s.wheel_rest[axis] / WHEEL_DELTA;
                     if notches != 0 {
-                        s.wheel_rest[axis] -= notches * WHEEL_DELTA;
+                        s.wheel_rest[axis] =
+                            s.wheel_rest[axis].saturating_sub(notches.saturating_mul(WHEEL_DELTA));
                         let (dx, dy) = if axis == 1 { (0, notches) } else { (notches, 0) };
                         s.core.feed_wheel(dx, dy, t);
                     }
@@ -325,8 +330,15 @@ pub struct RecorderHandle {
 impl RecorderHandle {
     pub fn stop(&self, from_editor: bool) {
         self.stop.request(from_editor);
-        // SAFETY: posts WM_QUIT to the recording thread's message loop.
-        unsafe { PostThreadMessageW(self.thread_id.load(Ordering::SeqCst), WM_QUIT, 0, 0) };
+        // Posting can fail if the thread's message queue is busy: retry for up to a second.
+        for _ in 0..100 {
+            // SAFETY: posts WM_QUIT to the recording thread's message loop.
+            if unsafe { PostThreadMessageW(self.thread_id.load(Ordering::SeqCst), WM_QUIT, 0, 0) } != 0 {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        log!("could not stop the recording thread");
     }
 }
 
@@ -373,7 +385,7 @@ pub fn start_recording(
                 UnhookWindowsHookEx(h);
             }
             if let Some(mut state) = HOOK_STATE.with(|s| s.borrow_mut().take()) {
-                state.core.finish(thread_stop.from_editor());
+                state.core.finish(thread_stop.was_from_editor());
             }
         }
     });
@@ -388,6 +400,34 @@ pub fn start_recording(
         Ok(Err(error)) => Err(InputError::new("hook_failed", error)),
         Err(_) => Err(InputError::new("hook_failed", "timeout")),
     }
+}
+
+// ---------------------------------------------------------------- diagnostics
+
+/// Checks run from the About tab: tries to install (and immediately remove) the hooks
+/// used for recording. `ok` is null for information-only lines.
+pub fn diagnostics() -> Vec<Value> {
+    let mut checks = Vec::new();
+    for (id, kind, proc_) in [
+        (
+            "keyboardHook",
+            WH_KEYBOARD_LL,
+            keyboard_proc as unsafe extern "system" fn(i32, WPARAM, LPARAM) -> LRESULT,
+        ),
+        ("mouseHook", WH_MOUSE_LL, mouse_proc),
+    ] {
+        // SAFETY: installs a hook and removes it right away; the procedures are valid.
+        let hook = unsafe { SetWindowsHookExW(kind, Some(proc_), GetModuleHandleW(std::ptr::null()), 0) };
+        if hook.is_null() {
+            let error = std::io::Error::last_os_error();
+            checks.push(json!({"id": id, "ok": false, "detail": error.to_string()}));
+        } else {
+            // SAFETY: the hook was just installed by this function.
+            unsafe { UnhookWindowsHookEx(hook) };
+            checks.push(json!({"id": id, "ok": true, "detail": "OK"}));
+        }
+    }
+    checks
 }
 
 #[cfg(test)]
@@ -406,28 +446,4 @@ mod tests {
             assert_eq!(back, Some(code), "evdev code {code}");
         }
     }
-}
-
-// ---------------------------------------------------------------- diagnostics
-
-/// Checks run from the About tab: tries to install (and immediately remove) the hooks
-/// used for recording. `ok` is null for information-only lines.
-pub fn diagnostics() -> Vec<Value> {
-    let mut checks = Vec::new();
-    for (id, kind, proc_) in [
-        ("keyboardHook", WH_KEYBOARD_LL, keyboard_proc as unsafe extern "system" fn(i32, WPARAM, LPARAM) -> LRESULT),
-        ("mouseHook", WH_MOUSE_LL, mouse_proc),
-    ] {
-        // SAFETY: installs a hook and removes it right away; the procedures are valid.
-        let hook = unsafe { SetWindowsHookExW(kind, Some(proc_), GetModuleHandleW(std::ptr::null()), 0) };
-        if hook.is_null() {
-            let error = std::io::Error::last_os_error();
-            checks.push(json!({"id": id, "ok": false, "detail": error.to_string()}));
-        } else {
-            // SAFETY: the hook was just installed by this function.
-            unsafe { UnhookWindowsHookEx(hook) };
-            checks.push(json!({"id": id, "ok": true, "detail": "OK"}));
-        }
-    }
-    checks
 }

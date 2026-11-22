@@ -1,0 +1,3 @@
+# Shared formatting settings (cargo fmt).
+max_width = 110
+use_small_heuristics = "Max"

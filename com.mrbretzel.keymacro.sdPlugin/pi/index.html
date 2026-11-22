@@ -27,6 +27,7 @@
 	button.rec { background: var(--rec); border-color: var(--rec); color: #fff; }
 	button.icon { padding: 2px 5px; min-width: 22px; }
 	button:disabled { opacity: .4; cursor: default; }
+	button.armed { background: var(--rec); border-color: var(--rec); color: #fff; }
 	input, select, textarea { background: #232323; color: var(--text); border: 1px solid var(--line);
 		border-radius: 4px; padding: 3px 5px; font: inherit; }
 	/* Native GTK/WebKit selects ignore the dark colors: draw them entirely in CSS. */
@@ -508,7 +509,7 @@ function renderRows() {
 		if (type === "wheel") return `<td class="mouse-label">🖱 ${escapeHtml(t("ev.wheel"))}</td><td>${xy(e, "↔", "↕")}</td>`;
 		return `<td class="key">
 				<input list="keylist" data-f="key" value="${escapeHtml(keyLabel(e.code, layout))}" ${dis}/>
-				<div class="kname">${keyName(e.code)} (${e.code})</div>
+				<div class="kname">${escapeHtml(keyName(e.code))} (${escapeHtml(e.code)})</div>
 			</td>
 			<td><button class="dir ${e.down ? "down" : "up"}" data-f="dir" ${dis}>${escapeHtml(t(e.down ? "dir.down" : "dir.up"))}</button></td>`;
 	};
@@ -695,7 +696,7 @@ $("copyReport").onclick = () => copyText(buildReport());
 $("logRefresh").onclick = () => toPlugin({ cmd: "readLog" });
 $("logCopy").onclick = () => copyText(logText);
 $("logOpen").onclick = () => toPlugin({ cmd: "openLogFolder" });
-$("logClear").onclick = () => { if (confirm(t("confirm.clearLog"))) toPlugin({ cmd: "clearLog" }); };
+$("logClear").onclick = () => confirmClick($("logClear"), () => toPlugin({ cmd: "clearLog" }));
 $("debugToggle").onchange = () => {
 	toPlugin({ cmd: "setDebug", enabled: $("debugToggle").checked });
 	setTimeout(() => toPlugin({ cmd: "readLog" }), 200);
@@ -769,8 +770,8 @@ $("recordMouse").onchange = () => { settings.recordMouse = $("recordMouse").chec
 $("recordMouseMove").onchange = () => { settings.recordMouseMove = $("recordMouseMove").checked; save(); };
 
 $("clear").onclick = () => {
-	if (!evs().length || !confirm(t("confirm.clear"))) return;
-	pushHistory(); setEvs([]); save(); renderRows();
+	if (!evs().length) return;
+	confirmClick($("clear"), () => { pushHistory(); setEvs([]); save(); renderRows(); });
 };
 function undo() {
 	if (!history.length) return;
@@ -780,6 +781,26 @@ $("undo").onclick = undo;
 document.addEventListener("keydown", (e) => {
 	if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); undo(); }
 });
+
+// Destructive buttons ask for a second click instead of window.confirm(), which the
+// host's embedded browser may block. The button shows "Confirm?" for 3 seconds.
+function confirmClick(button, action) {
+	if (button.dataset.armed) {
+		clearTimeout(+button.dataset.armed);
+		delete button.dataset.armed;
+		button.classList.remove("armed");
+		applyTranslations(button.parentElement);
+		action();
+		return;
+	}
+	button.textContent = t("confirm.again");
+	button.classList.add("armed");
+	button.dataset.armed = setTimeout(() => {
+		delete button.dataset.armed;
+		button.classList.remove("armed");
+		applyTranslations(button.parentElement);
+	}, 3000);
+}
 
 function bulk(fn) { pushHistory(); evs().forEach(fn); save(); renderRows(); }
 $("mul").onclick = () => { const k = +$("mulVal").value; bulk((e) => (e.delay = Math.round((+e.delay || 0) * k))); };

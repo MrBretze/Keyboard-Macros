@@ -26,7 +26,13 @@ fn main() {
             _ => None,
         })
         .collect();
-    log!("start {} {}/{} (port {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH, args.get("port").unwrap_or(&"?"));
+    log!(
+        "start {} {}/{} (port {})",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        args.get("port").unwrap_or(&"?")
+    );
 
     let (Some(port), Some(uuid), Some(register)) = (
         args.get("port").and_then(|p| p.parse::<u16>().ok()),

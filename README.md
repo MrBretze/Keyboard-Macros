@@ -93,3 +93,13 @@ Notches turned while a turn macro is playing are queued, up to 50. Turning the o
 | `pi/appearance.js` | Custom key image rendering |
 | `pi/keys.js` | Key table |
 | `lang/en.json`, `lang/fr.json` | Translated plugin name and description (Stream Deck format) |
+
+## License
+
+Copyright (c) 2026 MrBretzel.
+
+This project is distributed under the [CeCILL v2.1](LICENSE) free software license (SPDX: `CECILL-2.1`), a French copyleft license compatible with the GNU GPL. The French and English versions of the license are equally authentic; the official texts are at https://cecill.info.
+
+You may use, copy, modify and redistribute this software, provided that:
+- you keep the copyright notice and this license;
+- any distributed copy or modified version is released under the same license, with its source code.

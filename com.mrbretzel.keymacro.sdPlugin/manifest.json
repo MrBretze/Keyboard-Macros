@@ -1,7 +1,8 @@
 {
 	"Name": "Keyboard Macros",
 	"Description": "Record, edit (timing included) and replay keyboard macros.",
-	"Author": "mrbretzel",
+	"Author": "MrBretzel",
+	"URL": "https://github.com/MrBretze/Keyboard-Macros",
 	"Version": "1.3.0",
 	"SDKVersion": 2,
 	"Icon": "icons/plugin",

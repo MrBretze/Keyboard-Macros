@@ -10,40 +10,33 @@ An OpenDeck (and Stream Deck) plugin that records keyboard and mouse sequences w
 
 ## Requirements
 
-OpenDeck does **not** ship Python. On Linux, this plugin needs:
+The plugin is a single self-contained executable: OpenDeck needs **no runtime** (no Python, no Node.js) to run it.
 
-| Dependency | Why | How to get it |
+On **Linux**, your user needs access to the input devices:
+
+| Access | Why | How to get it |
 |---|---|---|
-| **Python 3.8 or newer** (standard library only, no `pip` package) | The plugin is written in Python | Already included in the OpenDeck **Flatpak** runtime. With a native OpenDeck package (`.deb`, `.rpm`, AUR...), install it from your distribution: `sudo apt install python3` (Debian / Ubuntu), `sudo dnf install python3` (Fedora), `sudo pacman -S python` (Arch). |
 | Read/write access to `/dev/uinput` | Simulating keyboard and mouse input | Add your user to the `input` group (`sudo usermod -aG input $USER`), then log out and back in. Some distributions grant it to the logged-in user already. |
 | Read access to `/dev/input/event*` | Recording keyboard and mouse input | Same `input` group as above. |
 
-If Python is missing, the plugin does not start and writes the reason to `plugin.log` in its folder and to OpenDeck's log.
+If an access is missing, the editor shows an error explaining what to fix.
 
 ## Installation
 
-### Linux
+Install it from OpenDeck's plugin list, or download `KeyboardMacros-<version>.zip` from the [latest release](https://github.com/MrBretze/Keyboard-Macros/releases/latest) and use "Install from file" in OpenDeck. Then restart OpenDeck.
 
-Install it from OpenDeck's plugin list, or download the `.zip` from the [latest release](https://github.com/MrBretze/Keyboard-Macros/releases/latest) and use "Install from file" in OpenDeck. From a clone of this repository, you can also run:
+The release contains executables for Linux x86_64, Linux ARM64 (aarch64) and Windows x86_64. OpenDeck picks the right one.
 
-```bash
-./install.sh   # copies the plugin into OpenDeck's plugin folder (Flatpak or native)
-```
+Windows support is built and tested automatically, but has not been tried on a real Windows machine yet. macOS is not supported: there is no macOS input backend.
 
-Then restart OpenDeck.
+### Building from source
 
-### Windows
+You need [Rust](https://rustup.rs).
 
-Windows support has not been tested on a real Windows machine yet.
+- **Linux**: `./install.sh` builds a static executable (`musl` target) and copies the plugin into OpenDeck's plugin folder (Flatpak or native).
+- **Windows**: `powershell -ExecutionPolicy Bypass -File install.ps1` builds and installs the plugin. Add `-StreamDeck` to install it into the Elgato software instead.
 
-1. Install Python 3 from python.org. The `py` launcher must be available.
-2. Run `build_windows.bat`. It builds `plugin.exe` into the plugin folder with PyInstaller.
-3. Run `powershell -ExecutionPolicy Bypass -File install.ps1`. Add `-StreamDeck` to install into the Elgato software instead of OpenDeck.
-4. Restart OpenDeck.
-
-### macOS
-
-Not supported yet: there is no macOS input backend.
+`cargo test` runs the unit tests. Every push builds all platforms on GitHub Actions. Pushing a `v*` tag attaches the zip to the matching release.
 
 ## Usage
 
@@ -95,16 +88,19 @@ Notches turned while a turn macro is playing are queued, up to 50. Turning the o
   - Brightness keys are not supported.
   - Windows blocks keystrokes sent to windows running as administrator.
 - Custom key images are drawn in the settings panel and stored in the action settings. The plugin then sends the right image to the deck for each state.
-- Log: `plugin.log` in the installed plugin folder.
+- Log: `plugin.log` in the installed plugin folder. Times are in UTC.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `run.sh` | Linux launcher: checks the Python 3.8+ dependency, then starts `plugin.py` |
-| `plugin.py` | Entry point: WebSocket connection, playback, recording, key images |
-| `input_common.py` | Shared code (recorder logic, errors, logging) |
-| `input_linux.py` / `input_windows.py` | Keyboard simulation and capture for each OS |
+| `src/main.rs` | Entry point: arguments, connection to OpenDeck |
+| `src/plugin.rs` | Plugin logic: events, playback, dial queue, recording, key images |
+| `src/recorder.rs` | Recording logic shared by every platform (filtering, merging, delays) |
+| `src/input/linux.rs` / `src/input/windows.rs` | Keyboard and mouse simulation and capture for each OS |
+| `src/ws.rs`, `src/common.rs` | WebSocket connection; shared helpers (macro format, logging) |
+| `.github/workflows/release.yml` | Builds, tests and packages all platforms |
+| `com.mrbretzel.keymacro.sdPlugin/` | The plugin folder: manifest, icons and editor |
 | `pi/index.html` | Editor (Property Inspector) |
 | `pi/i18n.js`, `pi/locales/*.js` | Editor translations |
 | `pi/appearance.js` | Custom key image rendering |

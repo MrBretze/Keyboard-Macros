@@ -3,18 +3,17 @@
 	"Description": "Record, edit (timing included) and replay keyboard macros.",
 	"Author": "MrBretzel",
 	"URL": "https://github.com/MrBretze/Keyboard-Macros",
-	"Version": "1.3.1",
+	"Version": "2.0.0",
 	"SDKVersion": 2,
 	"Icon": "icons/plugin",
 	"Category": "Keyboard Macros",
 	"CategoryIcon": "icons/plugin",
-	"CodePath": "run.sh",
-	"CodePathLin": "run.sh",
-	"CodePathWin": "plugin.exe",
+	"CodePathLin": "keymacro-linux-x86_64",
+	"CodePathWin": "keymacro-windows-x86_64.exe",
 	"CodePaths": {
-		"x86_64-unknown-linux-gnu": "run.sh",
-		"aarch64-unknown-linux-gnu": "run.sh",
-		"x86_64-pc-windows-msvc": "plugin.exe"
+		"x86_64-unknown-linux-gnu": "keymacro-linux-x86_64",
+		"aarch64-unknown-linux-gnu": "keymacro-linux-aarch64",
+		"x86_64-pc-windows-msvc": "keymacro-windows-x86_64.exe"
 	},
 	"OS": [
 		{

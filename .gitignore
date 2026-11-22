@@ -1,13 +1,11 @@
-# Python
-__pycache__/
-*.pyc
+# Rust build output
+/target/
+
+# Executables are built into the plugin folder by install.sh / install.ps1 / CI
+/com.mrbretzel.keymacro.sdPlugin/keymacro-*
 
 # Runtime log written next to the plugin
 plugin.log
-
-# Windows build (build_windows.bat)
-build/
-com.mrbretzel.keymacro.sdPlugin/plugin.exe
 
 # IDE
 .idea/

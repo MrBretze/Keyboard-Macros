@@ -94,6 +94,18 @@
 	.tab.active { color: var(--text); border-bottom-color: var(--accent); }
 	.panel { display: none; }
 	.panel.active { display: block; }
+	.about-head { display: flex; gap: 10px; align-items: center; margin: 2px 0 8px; }
+	.about-logo { width: 48px; height: 48px; }
+	.about-name { font-size: 15px; font-weight: 600; }
+	table.kv td { border: none; padding: 2px 6px 2px 0; vertical-align: top; }
+	table.kv td:first-child { color: var(--muted); white-space: nowrap; width: 1%; }
+	.mono { font-family: monospace; font-size: 11px; word-break: break-all; }
+	.checks { list-style: none; padding: 0; margin: 4px 0; }
+	.checks li { padding: 3px 0; border-bottom: 1px solid #353535; }
+	.checks .mark { display: inline-block; width: 18px; font-weight: 700; }
+	.checks .ok { color: #9be2bd; } .checks .bad { color: #ffb3b5; } .checks .info { color: var(--muted); }
+	.checks .detail { display: block; margin-left: 18px; color: var(--muted); font-size: 11px; word-break: break-word; }
+	#logText { width: 100%; height: 220px; font: 11px monospace; resize: vertical; white-space: pre; }
 	.slot-row { display: none; padding: 6px 8px; background: var(--panel); border-radius: 4px; margin-bottom: 8px; }
 	body.encoder .slot-row { display: flex; }
 	.encoder-only { display: none; }
@@ -114,6 +126,7 @@
 		<button class="tab" data-tab="appearance" data-i18n="tab.appearance"></button>
 		<button class="tab" data-tab="language" data-i18n="tab.language"></button>
 		<button class="tab" data-tab="json" data-i18n="tab.json"></button>
+		<button class="tab" data-tab="about" data-i18n="tab.about"></button>
 	</nav>
 
 	<!-- Tab: record / edit the macro -->
@@ -279,6 +292,44 @@
 		<p class="hint" data-i18n="hint.json"></p>
 	</section>
 
+	<!-- Tab: about, diagnostics and logs -->
+	<section class="panel" id="tab-about">
+		<div class="about-head">
+			<img src="../icons/plugin@2x.png" alt="" class="about-logo" />
+			<div>
+				<div class="about-name">Keyboard Macros</div>
+				<div class="hint" id="aboutVersion"></div>
+			</div>
+		</div>
+		<table class="kv"><tbody id="aboutTable"></tbody></table>
+		<div class="row">
+			<button id="linkRepo" data-i18n="about.repo"></button>
+			<button id="linkIssues" data-i18n="about.issues"></button>
+			<button id="linkLicense" data-i18n="about.license"></button>
+		</div>
+
+		<h3 data-i18n="section.diagnostics"></h3>
+		<div class="row">
+			<button id="runDiag" data-i18n="btn.runDiag"></button>
+			<button id="copyReport" data-i18n="btn.copyReport" data-i18n-title="title.copyReport"></button>
+		</div>
+		<ul class="checks" id="diagList"></ul>
+
+		<h3 data-i18n="section.log"></h3>
+		<div class="row">
+			<button id="logRefresh" data-i18n="btn.logRefresh"></button>
+			<button id="logCopy" data-i18n="btn.logCopy"></button>
+			<button id="logOpen" data-i18n="btn.logOpen"></button>
+			<button id="logClear" data-i18n="btn.logClear"></button>
+		</div>
+		<div class="row">
+			<label><input type="checkbox" id="debugToggle" /> <span data-i18n="label.debug"></span></label>
+		</div>
+		<p class="hint" data-i18n="hint.debug"></p>
+		<textarea id="logText" readonly spellcheck="false"></textarea>
+		<p class="hint"><span data-i18n="hint.logUtc"></span> <span id="logPath" class="mono"></span></p>
+	</section>
+
 <script>
 let ws = null, ctx = null, actionUUID = null, hostInfo = null;
 let settings = {};
@@ -305,6 +356,7 @@ function connectElgatoStreamDeckSocket(inPort, inUUID, inRegisterEvent, inInfo, 
 	ws.onopen = () => {
 		ws.send(JSON.stringify({ event: inRegisterEvent, uuid: inUUID }));
 		toPlugin({ cmd: "status" });
+		if (currentTab === "about") requestAbout();
 	};
 	ws.onmessage = (e) => onMessage(JSON.parse(e.data));
 	loadUI();
@@ -364,6 +416,9 @@ function onMessage(msg) {
 			break;
 		case "playing":
 			state.playing = p.playing; setStatus(null); break;
+		case "about": aboutData = p; renderAbout(); break;
+		case "diagnostics": diagData = p.checks || []; renderDiagnostics(); break;
+		case "log": showLog(p.text || ""); break;
 		case "error": {
 			const key = "error." + p.code;
 			setStatus({ key: t(key) === key ? "error.unknown" : key, params: { code: p.code, detail: p.detail || "" }, cls: "error" });
@@ -526,8 +581,11 @@ $("slot").onchange = () => selectSlot($("slot").value);
 
 // ---------------------------------------------------------------- tabs
 const TAB_STORAGE_KEY = "keymacro.tab";
+let currentTab = "macro";
 function showTab(name) {
 	if (!$("tab-" + name)) name = "macro";
+	currentTab = name;
+	if (name === "about") requestAbout();
 	document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
 	document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === "tab-" + name));
 	try { sessionStorage.setItem(TAB_STORAGE_KEY, name); } catch (e) { /* ignore */ }
@@ -535,6 +593,106 @@ function showTab(name) {
 document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
 // Default tab is "macro"; the last tab is remembered while the panel stays in the same session.
 showTab((() => { try { return sessionStorage.getItem(TAB_STORAGE_KEY); } catch (e) { return null; } })() || "macro");
+
+// ---------------------------------------------------------------- about, diagnostics, logs
+const REPO_URL = "https://github.com/MrBretze/Keyboard-Macros";
+let aboutData = null, diagData = null, logText = "";
+
+function requestAbout() {
+	toPlugin({ cmd: "about" });
+	toPlugin({ cmd: "readLog" });
+}
+
+// Links open in the default browser through OpenDeck ("openUrl" SDK event).
+function openUrl(url) {
+	if (ws && ws.readyState === 1) ws.send(JSON.stringify({ event: "openUrl", payload: { url } }));
+}
+$("linkRepo").onclick = () => openUrl(REPO_URL);
+$("linkIssues").onclick = () => openUrl(REPO_URL + "/issues/new");
+$("linkLicense").onclick = () => openUrl(REPO_URL + "/blob/main/LICENSE");
+
+function renderAbout() {
+	const a = aboutData;
+	if (!a) return;
+	const app = (hostInfo && hostInfo.application) || {};
+	$("aboutVersion").textContent = t("about.version", { v: a.version });
+	const rows = [
+		["about.platform", `${a.os} / ${a.arch}`],
+		["about.host", [app.platform, app.version].filter(Boolean).join(" ") || "—"],
+		["about.controller", a.controller],
+		["about.devices", a.devices],
+		["about.language", currentLang],
+		["about.context", a.context],
+		["about.folder", a.pluginDir],
+	];
+	$("aboutTable").innerHTML = rows
+		.map(([k, v]) => `<tr><td>${escapeHtml(t(k))}</td><td class="${k === "about.folder" || k === "about.context" ? "mono" : ""}">${escapeHtml(v)}</td></tr>`)
+		.join("");
+	$("debugToggle").checked = !!a.debug;
+	$("logPath").textContent = a.logPath;
+}
+
+function renderDiagnostics() {
+	$("diagList").innerHTML = (diagData || []).map((c) => {
+		const cls = c.ok === true ? "ok" : c.ok === false ? "bad" : "info";
+		const mark = c.ok === true ? "✓" : c.ok === false ? "✗" : "•";
+		const help = c.ok === false && t("diagHelp." + c.id) !== "diagHelp." + c.id ? " " + t("diagHelp." + c.id) : "";
+		return `<li><span class="mark ${cls}">${mark}</span>${escapeHtml(t("diag." + c.id))}
+			<span class="detail">${escapeHtml(c.detail + help)}</span></li>`;
+	}).join("");
+}
+
+function showLog(text) {
+	logText = text;
+	const area = $("logText");
+	area.value = text || t("log.empty");
+	area.scrollTop = area.scrollHeight; // newest lines at the bottom
+}
+
+// Clipboard API first; falls back to a temporary selection for older webviews.
+function copyText(text) {
+	const done = () => setStatus({ key: "status.copied" });
+	if (navigator.clipboard && navigator.clipboard.writeText) {
+		navigator.clipboard.writeText(text).then(done, () => legacyCopy(text, done));
+	} else legacyCopy(text, done);
+}
+function legacyCopy(text, done) {
+	const tmp = document.createElement("textarea");
+	tmp.value = text; document.body.appendChild(tmp); tmp.select();
+	try { document.execCommand("copy"); done(); } catch (e) { /* ignore */ }
+	tmp.remove();
+}
+
+// Text report to paste into a bug report.
+function buildReport() {
+	const a = aboutData || {};
+	const app = (hostInfo && hostInfo.application) || {};
+	const count = (k) => (Array.isArray(settings[k]) ? settings[k].length : 0);
+	const lines = [
+		`Keyboard Macros ${a.version || "?"} — ${a.os || "?"} / ${a.arch || "?"}`,
+		`Host: ${[app.platform, app.version].filter(Boolean).join(" ") || "?"} · controller: ${a.controller || "?"} · language: ${currentLang}`,
+		`Virtual devices: ${a.devices || "?"}`,
+		`Macro: press ${count("events")} events, turn right ${count("eventsCW")}, turn left ${count("eventsCCW")} · mouse recording: ${!!settings.recordMouse}`,
+		"",
+		"Diagnostics:",
+		...(diagData || []).map((c) => `  [${c.ok === true ? "OK" : c.ok === false ? "FAIL" : "info"}] ${c.id}: ${c.detail}`),
+		"",
+		"Last log lines (UTC):",
+		...logText.trim().split("\n").slice(-60),
+	];
+	return lines.join("\n");
+}
+
+$("runDiag").onclick = () => toPlugin({ cmd: "diagnostics" });
+$("copyReport").onclick = () => copyText(buildReport());
+$("logRefresh").onclick = () => toPlugin({ cmd: "readLog" });
+$("logCopy").onclick = () => copyText(logText);
+$("logOpen").onclick = () => toPlugin({ cmd: "openLogFolder" });
+$("logClear").onclick = () => { if (confirm(t("confirm.clearLog"))) toPlugin({ cmd: "clearLog" }); };
+$("debugToggle").onchange = () => {
+	toPlugin({ cmd: "setDebug", enabled: $("debugToggle").checked });
+	setTimeout(() => toPlugin({ cmd: "readLog" }), 200);
+};
 
 // ---------------------------------------------------------------- import / export
 // The text area mirrors the current macro, except while the user is editing it.

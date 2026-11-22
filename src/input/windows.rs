@@ -13,6 +13,7 @@
 use crate::common::{BTN_EXTRA, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_SIDE, InputError};
 use crate::log;
 use crate::recorder::{OnEvent, OnStop, RecordOptions, RecorderCore, StopRequest};
+use serde_json::{Value, json};
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::Mutex;
@@ -224,6 +225,11 @@ impl VirtualInput {
         Ok(())
     }
 
+    /// Status line for the About tab.
+    pub fn status(&self) -> String {
+        "SendInput (no device to create)".to_owned()
+    }
+
     pub fn release_all(&self) {
         let pressed: Vec<u16> = self.pressed.lock().unwrap().iter().copied().collect();
         for code in pressed {
@@ -400,4 +406,28 @@ mod tests {
             assert_eq!(back, Some(code), "evdev code {code}");
         }
     }
+}
+
+// ---------------------------------------------------------------- diagnostics
+
+/// Checks run from the About tab: tries to install (and immediately remove) the hooks
+/// used for recording. `ok` is null for information-only lines.
+pub fn diagnostics() -> Vec<Value> {
+    let mut checks = Vec::new();
+    for (id, kind, proc_) in [
+        ("keyboardHook", WH_KEYBOARD_LL, keyboard_proc as unsafe extern "system" fn(i32, WPARAM, LPARAM) -> LRESULT),
+        ("mouseHook", WH_MOUSE_LL, mouse_proc),
+    ] {
+        // SAFETY: installs a hook and removes it right away; the procedures are valid.
+        let hook = unsafe { SetWindowsHookExW(kind, Some(proc_), GetModuleHandleW(std::ptr::null()), 0) };
+        if hook.is_null() {
+            let error = std::io::Error::last_os_error();
+            checks.push(json!({"id": id, "ok": false, "detail": error.to_string()}));
+        } else {
+            // SAFETY: the hook was just installed by this function.
+            unsafe { UnhookWindowsHookEx(hook) };
+            checks.push(json!({"id": id, "ok": true, "detail": "OK"}));
+        }
+    }
+    checks
 }

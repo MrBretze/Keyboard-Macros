@@ -18,6 +18,7 @@ use crate::recorder::{OnEvent, OnStop, RecordOptions, RecorderCore, StopRequest}
 use evdev::raw_stream::RawDevice;
 use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, InputEvent, KeyCode, RelativeAxisCode};
+use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::os::fd::AsRawFd;
 use std::sync::Mutex;
@@ -151,6 +152,13 @@ impl VirtualInput {
         d.mouse()?.emit(&events).map_err(uinput_error)
     }
 
+    /// Which virtual devices exist, for the About tab.
+    pub fn status(&self) -> String {
+        let d = self.devices.lock().unwrap();
+        let state = |created: bool| if created { "created" } else { "not created yet" };
+        format!("keyboard: {}, mouse: {}", state(d.keyboard.is_some()), state(d.mouse.is_some()))
+    }
+
     /// Releases every key and button this plugin still holds down.
     pub fn release_all(&self) {
         let pressed: Vec<u16> = self.devices.lock().unwrap().pressed.iter().copied().collect();
@@ -273,4 +281,57 @@ fn record_loop(mut devices: Vec<(String, RawDevice)>, mut core: RecorderCore, st
         }
     }
     core.finish(stop.from_editor());
+}
+
+// ---------------------------------------------------------------- diagnostics
+
+fn check(id: &str, ok: Option<bool>, detail: impl Into<String>) -> Value {
+    json!({"id": id, "ok": ok, "detail": detail.into()})
+}
+
+/// Checks run from the About tab. `ok` is null for information-only lines.
+pub fn diagnostics() -> Vec<Value> {
+    let mut checks = Vec::new();
+
+    let uinput = std::fs::OpenOptions::new().read(true).write(true).open("/dev/uinput");
+    checks.push(match uinput {
+        Ok(_) => check("uinput", Some(true), "/dev/uinput: read/write OK"),
+        Err(e) => check("uinput", Some(false), format!("/dev/uinput: {e}")),
+    });
+
+    let (mut total, mut denied) = (0, 0);
+    if let Ok(entries) = std::fs::read_dir("/dev/input") {
+        for entry in entries.flatten() {
+            if !entry.file_name().to_string_lossy().starts_with("event") {
+                continue;
+            }
+            total += 1;
+            if let Err(e) = std::fs::File::open(entry.path()) {
+                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    denied += 1;
+                }
+            }
+        }
+    }
+    checks.push(check(
+        "eventAccess",
+        Some(total > 0 && denied == 0),
+        format!("/dev/input/event*: {} of {total} readable", total - denied),
+    ));
+
+    let keyboards: Vec<String> = open_devices(false).into_iter().map(|(n, _)| n).collect();
+    let mice: Vec<String> =
+        open_devices(true).into_iter().map(|(n, _)| n).filter(|n| !keyboards.contains(n)).collect();
+    let list = |v: &[String]| if v.is_empty() { "none".to_owned() } else { v.join(", ") };
+    checks.push(check("keyboards", Some(!keyboards.is_empty()), list(&keyboards)));
+    checks.push(check("mice", None, list(&mice)));
+
+    let flatpak = std::path::Path::new("/.flatpak-info").exists();
+    let detail = if flatpak {
+        format!("yes ({})", std::env::var("FLATPAK_ID").unwrap_or_default())
+    } else {
+        "no".to_owned()
+    };
+    checks.push(check("flatpak", None, detail));
+    checks
 }

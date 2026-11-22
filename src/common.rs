@@ -9,7 +9,8 @@
 use serde_json::Value;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -103,10 +104,24 @@ pub fn plugin_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Log files are rotated past this size: plugin.log becomes plugin.log.old.
+const LOG_MAX_BYTES: u64 = 1024 * 1024;
+
+/// Verbose logging (every message exchanged with OpenDeck, every replayed event).
+/// Toggled from the editor's About tab and saved in the plugin's global settings.
+pub static DEBUG: AtomicBool = AtomicBool::new(false);
+
 static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 
+pub fn log_path() -> &'static Path {
+    LOG_PATH.get_or_init(|| plugin_dir().join("plugin.log"))
+}
+
 pub fn write_log(message: &str) {
-    let path = LOG_PATH.get_or_init(|| plugin_dir().join("plugin.log"));
+    let path = log_path();
+    if std::fs::metadata(path).is_ok_and(|m| m.len() > LOG_MAX_BYTES) {
+        let _ = std::fs::rename(path, path.with_extension("log.old"));
+    }
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let (h, m, s) = ((secs / 3600) % 24, (secs / 60) % 60, secs % 60);
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
@@ -114,7 +129,66 @@ pub fn write_log(message: &str) {
     }
 }
 
+/// Last `max_bytes` of the log, starting at a line boundary.
+pub fn read_log_tail(max_bytes: u64) -> String {
+    let Ok(bytes) = std::fs::read(log_path()) else { return String::new() };
+    let start = bytes.len().saturating_sub(max_bytes as usize);
+    let mut tail = &bytes[start..];
+    if start > 0 {
+        if let Some(newline) = tail.iter().position(|&b| b == b'\n') {
+            tail = &tail[newline + 1..];
+        }
+    }
+    String::from_utf8_lossy(tail).into_owned()
+}
+
+pub fn clear_log() -> std::io::Result<()> {
+    let path = log_path();
+    let _ = std::fs::remove_file(path.with_extension("log.old"));
+    std::fs::write(path, b"")
+}
+
+/// Opens a folder in the system file manager (through the desktop portal in a Flatpak).
+pub fn open_folder(path: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    let mut command = std::process::Command::new("explorer");
+    #[cfg(not(windows))]
+    let mut command = std::process::Command::new("xdg-open");
+    command.arg(path).spawn().map(|_| ())
+}
+
+/// Shortens long values (images are sent as data URLs) before they go into the log.
+pub fn shorten_for_log(text: &str) -> String {
+    const MAX: usize = 600;
+    let mut out = String::with_capacity(text.len().min(MAX + 32));
+    for part in text.split("data:image/") {
+        if !out.is_empty() {
+            // Keep only the image type, not its base64 data.
+            let kind: String = part.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '+').collect();
+            let rest = part.find('"').map_or("", |i| &part[i..]);
+            out.push_str(&format!("data:image/{kind};…"));
+            out.push_str(rest);
+        } else {
+            out.push_str(part);
+        }
+    }
+    if out.chars().count() > MAX {
+        out = out.chars().take(MAX).collect::<String>() + "…";
+    }
+    out
+}
+
 #[macro_export]
 macro_rules! log {
     ($($arg:tt)*) => { $crate::common::write_log(&format!($($arg)*)) };
+}
+
+/// Logs only when verbose logging is enabled.
+#[macro_export]
+macro_rules! debug_log {
+    ($($arg:tt)*) => {
+        if $crate::common::DEBUG.load(std::sync::atomic::Ordering::Relaxed) {
+            $crate::common::write_log(&format!("[debug] {}", format!($($arg)*)))
+        }
+    };
 }

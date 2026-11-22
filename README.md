@@ -40,7 +40,7 @@ You need [Rust](https://rustup.rs).
 
 ## Usage
 
-The settings panel has a status bar with a "▶ Test" button, and five tabs:
+The settings panel has a status bar with a "▶ Test" button, and six tabs:
 
 - **Macro** (default tab): record and edit the macro.
   - Click "● Record", type your sequence, then click "■ Stop" or press the deck key. "Append to the end" adds the recording after the existing macro instead of replacing it.
@@ -52,6 +52,9 @@ The settings panel has a status bar with a "▶ Test" button, and five tabs:
 - **Appearance**: default icon, custom image or plain color, with or without text on top. The text has adjustable size, color, position, font, bold and outline. A state indicator (playing / recording) can be shown in a corner, with a preview of all 3 states.
 - **Language**: automatic (OpenDeck's language, then the system language) or forced.
 - **Import / Export**: the text area always shows the current macro as JSON, ready to copy. To import, paste or edit JSON there and click "Import".
+- **About**: installed version, platform, OpenDeck version and links (GitHub, report a problem, license).
+  - **Diagnostics**: checks access to `/dev/uinput` and the input devices, lists the keyboards and mice available for recording (Linux), or tests the keyboard and mouse hooks (Windows). "Copy report" puts everything useful for a bug report in the clipboard.
+  - **Log**: shows the end of `plugin.log`, with buttons to refresh, copy, open its folder or clear it. "Verbose log (debug)" also logs every message exchanged with OpenDeck and every replayed macro; it applies to all actions and is remembered.
 
 On the deck, pressing the key plays the macro, and pressing it again during playback stops it.
 
@@ -88,7 +91,7 @@ Notches turned while a turn macro is playing are queued, up to 50. Turning the o
   - Brightness keys are not supported.
   - Windows blocks keystrokes sent to windows running as administrator.
 - Custom key images are drawn in the settings panel and stored in the action settings. The plugin then sends the right image to the deck for each state.
-- Log: `plugin.log` in the installed plugin folder. Times are in UTC.
+- Log: `plugin.log` in the installed plugin folder (times in UTC), also shown in the About tab. Past 1 MB it is renamed `plugin.log.old` and a new one starts.
 
 ## Files
 

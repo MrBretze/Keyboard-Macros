@@ -26,7 +26,7 @@ fn main() {
             _ => None,
         })
         .collect();
-    log!("start {} {} (port {:?})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, args.get("port"));
+    log!("start {} {}/{} (port {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH, args.get("port").unwrap_or(&"?"));
 
     let (Some(port), Some(uuid), Some(register)) = (
         args.get("port").and_then(|p| p.parse::<u16>().ok()),
@@ -46,8 +46,10 @@ fn main() {
         }
     };
     let _ = out.send(json!({"event": register, "uuid": uuid}).to_string());
+    // Global settings hold the "verbose logging" switch of the About tab.
+    let _ = out.send(json!({"event": "getGlobalSettings", "context": uuid}).to_string());
 
-    let plugin = plugin::Plugin::new(out);
+    let plugin = plugin::Plugin::new(out, uuid.to_string());
     for text in incoming {
         match serde_json::from_str::<Value>(&text) {
             Ok(msg) => plugin.handle(&msg),

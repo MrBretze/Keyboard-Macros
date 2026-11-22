@@ -3,14 +3,18 @@
 //! User-facing text is not produced here: errors are sent to the property inspector as
 //! codes, and the property inspector translates them.
 
-use crate::common::{InputError, MacroEvent, Step, parse_steps, plugin_dir};
-use crate::input::{RecorderHandle, VirtualInput, start_recording};
-use crate::log;
+use crate::common::{
+    DEBUG, InputError, MacroEvent, Step, clear_log, log_path, open_folder, parse_steps, plugin_dir, read_log_tail,
+    shorten_for_log,
+};
+use crate::input::{RecorderHandle, VirtualInput, diagnostics, start_recording};
+use crate::{debug_log, log};
 use crate::recorder::RecordOptions;
 use base64::Engine;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::Sender;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -27,6 +31,9 @@ const SLOT_CW: &str = "eventsCW";
 const SLOT_CCW: &str = "eventsCCW";
 /// Cap on queued dial notches, so a fast spin cannot run for minutes.
 const MAX_PENDING_TICKS: u32 = 50;
+
+/// How much of the log the About tab shows.
+const LOG_TAIL_BYTES: u64 = 48 * 1024;
 
 const STATE_ICONS: [&str; 3] = ["icons/state_idle@2x.png", "icons/state_play@2x.png", "icons/state_rec@2x.png"];
 
@@ -86,6 +93,8 @@ struct State {
 
 pub struct Plugin {
     out: Sender<String>,
+    /// UUID given by OpenDeck at launch; also the context of global settings.
+    plugin_uuid: String,
     input: VirtualInput,
     state: Mutex<State>,
     default_icons: Vec<Option<String>>,
@@ -105,9 +114,10 @@ fn has_events(s: Option<&Value>, slot: &str) -> bool {
 }
 
 impl Plugin {
-    pub fn new(out: Sender<String>) -> Arc<Self> {
+    pub fn new(out: Sender<String>, plugin_uuid: String) -> Arc<Self> {
         Arc::new(Self {
             out,
+            plugin_uuid,
             input: VirtualInput::default(),
             state: Mutex::new(State::default()),
             default_icons: STATE_ICONS.iter().map(|p| load_data_url(p)).collect(),
@@ -124,7 +134,9 @@ impl Plugin {
         if let Value::Object(map) = &mut message {
             map.retain(|_, v| !v.is_null());
         }
-        let _ = self.out.send(message.to_string());
+        let text = message.to_string();
+        debug_log!("-> {}", shorten_for_log(&text));
+        let _ = self.out.send(text);
     }
 
     fn send_event(&self, event: &str, context: &str, payload: Value) {
@@ -204,6 +216,7 @@ impl Plugin {
         let needs_keyboard = steps.iter().any(|st| matches!(st.event, MacroEvent::Key { code, .. } if !crate::common::is_mouse_button(code)));
         self.input.prepare(needs_keyboard, needs_mouse)?;
         // Absolute deadlines, so that the time spent sending input does not accumulate.
+        debug_log!("play {} steps (speed {:.0}%, fixed delay: {use_fixed})", steps.len(), speed * 100.0);
         let mut deadline = Instant::now();
         for (i, step) in steps.iter().enumerate() {
             // The fixed delay replaces key / button / wheel delays; mouse movements keep
@@ -412,6 +425,7 @@ impl Plugin {
         let context = msg.get("context").and_then(Value::as_str).unwrap_or("");
         let empty = json!({});
         let payload = msg.get("payload").unwrap_or(&empty);
+        debug_log!("<- {}", shorten_for_log(&msg.to_string()));
 
         {
             let mut st = self.lock();
@@ -451,6 +465,10 @@ impl Plugin {
                 }
             }
             "willDisappear" => self.stop_playing(context),
+            "didReceiveGlobalSettings" => {
+                let debug = payload.pointer("/settings/debug").and_then(Value::as_bool).unwrap_or(false);
+                DEBUG.store(debug, Ordering::Relaxed);
+            }
             "sendToPlugin" => self.handle_command(context, payload),
             _ => {}
         }
@@ -484,6 +502,48 @@ impl Plugin {
                 }
             }
             "stopPlay" => self.stop_playing(context),
+            // ---- About tab
+            "about" => {
+                let about = json!({
+                    "type": "about",
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "os": std::env::consts::OS,
+                    "arch": std::env::consts::ARCH,
+                    "pluginDir": plugin_dir().to_string_lossy(),
+                    "logPath": log_path().to_string_lossy(),
+                    "debug": DEBUG.load(Ordering::Relaxed),
+                    "devices": self.input.status(),
+                    "controller": self.lock().controllers.get(context).cloned().unwrap_or_else(|| "Keypad".to_owned()),
+                    "context": context,
+                });
+                self.to_pi(context, about);
+            }
+            "diagnostics" => {
+                let checks = diagnostics();
+                self.to_pi(context, json!({"type": "diagnostics", "checks": checks}));
+            }
+            "readLog" => {
+                let text = read_log_tail(LOG_TAIL_BYTES);
+                self.to_pi(context, json!({"type": "log", "text": text}));
+            }
+            "clearLog" => {
+                if let Err(e) = clear_log() {
+                    self.error(context, "log_failed", &e.to_string());
+                }
+                log!("log cleared");
+                self.to_pi(context, json!({"type": "log", "text": read_log_tail(LOG_TAIL_BYTES)}));
+            }
+            "openLogFolder" => {
+                if let Err(e) = open_folder(&plugin_dir()) {
+                    self.error(context, "open_failed", &e.to_string());
+                }
+            }
+            "setDebug" => {
+                let enabled = flag("enabled").unwrap_or(false);
+                DEBUG.store(enabled, Ordering::Relaxed);
+                log!("verbose logging {}", if enabled { "enabled" } else { "disabled" });
+                self.send(json!({"event": "setGlobalSettings", "context": self.plugin_uuid, "payload": {"debug": enabled}}));
+            }
             "status" => {
                 let st = self.lock();
                 let status = json!({

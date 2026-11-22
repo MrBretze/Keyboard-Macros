@@ -1,6 +1,12 @@
-# Keyboard Macros for OpenDeck
+<p align="center">
+  <img src="data/logo.png" alt="Keyboard Macros logo" width="128" height="128">
+</p>
 
-An OpenDeck (and Stream Deck) plugin that records keyboard sequences with their timing, lets you edit them, and replays them from a deck key. It works with keys and Stream Deck+ dials, runs on Linux and Windows, and its interface is available in English and French.
+<h1 align="center">Keyboard Macros for OpenDeck</h1>
+
+An OpenDeck (and Stream Deck) plugin that records keyboard and mouse sequences with their timing, lets you edit them, and replays them from a deck key. It works with keys and Stream Deck+ dials, runs on Linux and Windows, and its interface is available in English and French.
+
+![The plugin in OpenDeck: a macro on a key and on a Stream Deck+ dial, with the macro editor below](data/screenshot.png)
 
 ## Installation
 
@@ -93,6 +99,7 @@ Notches turned while a turn macro is playing are queued, up to 50. Turning the o
 | `pi/appearance.js` | Custom key image rendering |
 | `pi/keys.js` | Key table |
 | `lang/en.json`, `lang/fr.json` | Translated plugin name and description (Stream Deck format) |
+| `data/` | Logo and screenshot used by this README |
 
 ## License
 

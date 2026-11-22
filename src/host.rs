@@ -7,10 +7,12 @@
 //! - Outgoing: `Plugin` and its threads queue `Outgoing` messages; `deliver` sends them
 //!   one after the other, so OpenDeck receives them in the order they were produced.
 
-use crate::common::{DEBUG, shorten_for_log, write_log};
+use crate::common::{DEBUG, shorten_for_log, write_log_file_only};
+use crate::debug_log;
 use crate::plugin::{ACTION_UUID, Outgoing, Plugin};
-use crate::{debug_log, log};
-use openaction::global_events::{DidReceiveGlobalSettingsEvent, GlobalEventHandler};
+use openaction::global_events::{
+    DeviceDidConnectEvent, DeviceDidDisconnectEvent, DidReceiveGlobalSettingsEvent, GlobalEventHandler,
+};
 use openaction::{Action, Instance, OpenActionResult, async_trait};
 use serde_json::Value;
 use std::sync::Arc;
@@ -25,7 +27,7 @@ fn blocking<T>(f: impl FnOnce() -> T) -> T {
 fn log_event(event: &str, instance: &Instance, settings: &Value) {
     if DEBUG.load(Ordering::Relaxed) {
         let detail = shorten_for_log(&settings.to_string());
-        write_log(&format!("[debug] <- {event} {} {detail}", instance.instance_id));
+        write_log_file_only(&format!("[debug] <- {event} {} {detail}", instance.instance_id));
     }
 }
 
@@ -39,7 +41,9 @@ impl Action for MacroAction {
 
     async fn will_appear(&self, instance: &Instance, settings: &Value) -> OpenActionResult<()> {
         log_event("willAppear", instance, settings);
-        blocking(|| self.0.on_appear(&instance.instance_id, &instance.controller, settings));
+        blocking(|| {
+            self.0.on_appear(&instance.instance_id, &instance.device_id, &instance.controller, settings)
+        });
         Ok(())
     }
 
@@ -91,6 +95,16 @@ impl Action for MacroAction {
         Ok(())
     }
 
+    async fn property_inspector_did_appear(
+        &self,
+        instance: &Instance,
+        settings: &Value,
+    ) -> OpenActionResult<()> {
+        log_event("propertyInspectorDidAppear", instance, settings);
+        blocking(|| self.0.on_editor_appear(&instance.instance_id));
+        Ok(())
+    }
+
     async fn send_to_plugin(
         &self,
         instance: &Instance,
@@ -108,9 +122,23 @@ struct GlobalHandler(Arc<Plugin>);
 
 #[async_trait]
 impl GlobalEventHandler for GlobalHandler {
-    /// Registered with OpenDeck: ask for the saved global settings (language, verbose log).
+    /// Registered with OpenDeck: ask for the saved global settings (language, verbose log)
+    /// and note the decks already connected (from the `-info` launch argument).
     async fn plugin_ready(&self) -> OpenActionResult<()> {
+        let decks =
+            openaction::get_connected_devices().await.into_iter().map(|(id, d)| (id, d.name)).collect();
+        blocking(|| self.0.set_decks(decks));
         openaction::get_global_settings().await
+    }
+
+    async fn device_did_connect(&self, event: DeviceDidConnectEvent) -> OpenActionResult<()> {
+        blocking(|| self.0.on_deck_connected(&event.device, &event.deviceInfo.name));
+        Ok(())
+    }
+
+    async fn device_did_disconnect(&self, event: DeviceDidDisconnectEvent) -> OpenActionResult<()> {
+        blocking(|| self.0.on_deck_disconnected(&event.device));
+        Ok(())
     }
 
     async fn did_receive_global_settings(
@@ -134,7 +162,8 @@ pub async fn deliver(mut queue: UnboundedReceiver<Outgoing>) {
     while let Some(message) = queue.recv().await {
         debug_log!("-> {}", shorten_for_log(&describe(&message)));
         if let Err(e) = deliver_one(message).await {
-            log!("could not send a message to OpenDeck: {e}");
+            // File only: reporting through the failing connection would loop.
+            write_log_file_only(&format!("could not send a message to OpenDeck: {e}"));
         }
     }
 }
@@ -152,12 +181,17 @@ fn describe(message: &Outgoing) -> String {
         Outgoing::ToEditor { context, payload } => format!("sendToPropertyInspector {context} {payload}"),
         Outgoing::ToAllEditors { payload } => format!("sendToPropertyInspector (all visible) {payload}"),
         Outgoing::SetGlobalSettings { settings } => format!("setGlobalSettings {settings}"),
+        Outgoing::ShowOk { context } => format!("showOk {context}"),
+        Outgoing::OpenUrl { url } => format!("openUrl {url}"),
+        Outgoing::LogMessage { message } => format!("logMessage {message}"),
     }
 }
 
 async fn deliver_one(message: Outgoing) -> OpenActionResult<()> {
     let context = match &message {
         Outgoing::SetGlobalSettings { settings } => return openaction::set_global_settings(settings).await,
+        Outgoing::OpenUrl { url } => return openaction::open_url(url.clone()).await,
+        Outgoing::LogMessage { message } => return openaction::log_message(message.clone()).await,
         Outgoing::ToAllEditors { payload } => {
             for instance in openaction::visible_instances(ACTION_UUID).await {
                 instance.send_to_property_inspector(payload).await?;
@@ -168,6 +202,7 @@ async fn deliver_one(message: Outgoing) -> OpenActionResult<()> {
         | Outgoing::SetImage { context, .. }
         | Outgoing::SetFeedback { context, .. }
         | Outgoing::ShowAlert { context }
+        | Outgoing::ShowOk { context }
         | Outgoing::SetSettings { context, .. }
         | Outgoing::ToEditor { context, .. } => context.clone(),
     };
@@ -178,9 +213,13 @@ async fn deliver_one(message: Outgoing) -> OpenActionResult<()> {
         Outgoing::SetImage { image, state, .. } => instance.set_image(image, Some(u16::from(state))).await,
         Outgoing::SetFeedback { payload, .. } => instance.set_feedback(&payload).await,
         Outgoing::ShowAlert { .. } => instance.show_alert().await,
+        Outgoing::ShowOk { .. } => instance.show_ok().await,
         Outgoing::SetSettings { settings, .. } => instance.set_settings(&settings).await,
         Outgoing::ToEditor { payload, .. } => instance.send_to_property_inspector(payload).await,
-        Outgoing::SetGlobalSettings { .. } | Outgoing::ToAllEditors { .. } => Ok(()),
+        Outgoing::SetGlobalSettings { .. }
+        | Outgoing::ToAllEditors { .. }
+        | Outgoing::OpenUrl { .. }
+        | Outgoing::LogMessage { .. } => Ok(()),
     }
 }
 
@@ -195,7 +234,12 @@ impl log::Log for LogBridge {
 
     fn log(&self, record: &log::Record<'_>) {
         if self.enabled(record.metadata()) {
-            write_log(&format!("[{}] {}", record.level(), shorten_for_log(&record.args().to_string())));
+            // File only: these records can come from the connection itself.
+            write_log_file_only(&format!(
+                "[{}] {}",
+                record.level(),
+                shorten_for_log(&record.args().to_string())
+            ));
         }
     }
 

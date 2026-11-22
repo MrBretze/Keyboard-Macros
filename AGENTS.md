@@ -64,6 +64,8 @@ cargo audit                                              # known vulnerabilities
 - **Editor safety.**
   - Escape every value interpolated into `innerHTML` (`escapeHtml`), since settings can come from shared profiles.
   - Do not use `window.confirm()`: it may be blocked in OpenDeck's webview. Use `confirmClick`.
+  - The editor never sends a URL to open: it sends a `target`, and `link_url` in `plugin.rs` maps it to a known page.
+- **Logging.** `log!` writes to `plugin.log` and, once connected, to OpenDeck's log (`logMessage`). `debug_log!` writes to the file only. Use `write_log_file_only` for problems of the connection itself, to avoid a loop.
 
 ## Environment notes
 

@@ -11,6 +11,7 @@ I18N.en = {
 	"about.version": "Version {v}",
 	"about.platform": "Platform",
 	"about.host": "OpenDeck",
+	"about.decks": "Connected decks",
 	"about.controller": "Controller",
 	"about.devices": "Virtual devices",
 	"about.language": "Interface language",

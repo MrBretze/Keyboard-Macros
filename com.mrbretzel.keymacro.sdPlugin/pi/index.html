@@ -622,7 +622,6 @@ document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => showTab(b.da
 showTab((() => { try { return sessionStorage.getItem(TAB_STORAGE_KEY); } catch (e) { return null; } })() || "macro");
 
 // ---------------------------------------------------------------- about, diagnostics, logs
-const REPO_URL = "https://github.com/MrBretze/Keyboard-Macros";
 let aboutData = null, diagData = null, logText = "";
 
 function requestAbout() {
@@ -630,13 +629,10 @@ function requestAbout() {
 	toPlugin({ cmd: "readLog" });
 }
 
-// Links open in the default browser through OpenDeck ("openUrl" SDK event).
-function openUrl(url) {
-	if (ws && ws.readyState === 1) ws.send(JSON.stringify({ event: "openUrl", payload: { url } }));
-}
-$("linkRepo").onclick = () => openUrl(REPO_URL);
-$("linkIssues").onclick = () => openUrl(REPO_URL + "/issues/new");
-$("linkLicense").onclick = () => openUrl(REPO_URL + "/blob/main/LICENSE");
+// Links are opened by the plugin (OpenDeck's openUrl), which only accepts these targets.
+$("linkRepo").onclick = () => toPlugin({ cmd: "openUrl", target: "repo" });
+$("linkIssues").onclick = () => toPlugin({ cmd: "openUrl", target: "issues" });
+$("linkLicense").onclick = () => toPlugin({ cmd: "openUrl", target: "license" });
 
 function renderAbout() {
 	const a = aboutData;
@@ -647,6 +643,7 @@ function renderAbout() {
 		["about.platform", `${a.os} / ${a.arch}`],
 		["about.host", [app.platform, app.version].filter(Boolean).join(" ") || "—"],
 		["about.controller", a.controller],
+		["about.decks", (a.decks || []).join(", ") || "—"],
 		["about.devices", a.devices],
 		["about.language", currentLang],
 		["about.context", a.context],
@@ -698,7 +695,7 @@ function buildReport() {
 	const lines = [
 		`Keyboard Macros ${a.version || "?"} — ${a.os || "?"} / ${a.arch || "?"}`,
 		`Host: ${[app.platform, app.version].filter(Boolean).join(" ") || "?"} · controller: ${a.controller || "?"} · language: ${currentLang}`,
-		`Virtual devices: ${a.devices || "?"}`,
+		`Virtual devices: ${a.devices || "?"} · decks: ${(a.decks || []).join(", ") || "?"}`,
 		`Macro: press ${count("events")} events, turn right ${count("eventsCW")}, turn left ${count("eventsCCW")} · mouse recording: ${!!settings.recordMouse}`,
 		"",
 		"Diagnostics:",

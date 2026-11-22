@@ -16,7 +16,7 @@ use crate::recorder::RecordOptions;
 use crate::{debug_log, log};
 use base64::Engine;
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -45,6 +45,10 @@ pub enum Outgoing {
     ShowAlert {
         context: String,
     },
+    /// Brief check mark on the key (recording saved).
+    ShowOk {
+        context: String,
+    },
     SetSettings {
         context: String,
         settings: Value,
@@ -61,6 +65,26 @@ pub enum Outgoing {
     SetGlobalSettings {
         settings: Value,
     },
+    /// Opens a web page in the user's browser (About tab links).
+    OpenUrl {
+        url: String,
+    },
+    /// A line for OpenDeck's own log.
+    LogMessage {
+        message: String,
+    },
+}
+
+/// The only pages the editor may ask to open: never a URL coming from the editor itself.
+const REPOSITORY_URL: &str = "https://github.com/MrBretze/Keyboard-Macros";
+
+fn link_url(target: &str) -> Option<String> {
+    Some(match target {
+        "repo" => REPOSITORY_URL.to_owned(),
+        "issues" => format!("{REPOSITORY_URL}/issues/new"),
+        "license" => format!("{REPOSITORY_URL}/blob/main/LICENSE"),
+        _ => return None,
+    })
 }
 
 const STATE_IDLE: u8 = 0;
@@ -144,6 +168,10 @@ struct State {
     recording_ctx: Option<String>,
     /// Plugin-wide settings shared by every key: {"debug": bool, "language": "auto" | "en" | ...}.
     globals: Value,
+    /// Connected decks: device ID -> name.
+    decks: BTreeMap<String, String>,
+    /// Deck of each key, to stop its playback if the deck is unplugged.
+    deck_of: HashMap<String, String>,
 }
 
 pub struct Plugin {
@@ -489,6 +517,9 @@ impl Plugin {
         };
         self.send(Outgoing::SetSettings { context: context.to_owned(), settings });
         self.set_state(context, STATE_IDLE);
+        if !events.is_empty() {
+            self.send(Outgoing::ShowOk { context: context.to_owned() });
+        }
         log!("recorded {} events into {slot}", events.len());
         self.to_pi(context, json!({"type": "recorded", "events": events, "slot": slot}));
     }
@@ -511,10 +542,11 @@ impl Plugin {
     }
 
     /// A key or dial of this plugin becomes visible (`willAppear`).
-    pub fn on_appear(&self, context: &str, controller: &str, settings: &Value) {
+    pub fn on_appear(&self, context: &str, device: &str, controller: &str, settings: &Value) {
         let mut st = self.lock();
         st.settings.insert(context.to_owned(), settings.clone());
         st.controllers.insert(context.to_owned(), controller.to_owned());
+        st.deck_of.insert(context.to_owned(), device.to_owned());
         let busy = st.players.contains_key(context) || st.recording_ctx.as_deref() == Some(context);
         if !busy {
             st.states.insert(context.to_owned(), STATE_IDLE);
@@ -550,6 +582,37 @@ impl Plugin {
         if !self.is_recording(context) {
             self.rotate(context, i64::from(ticks));
         }
+    }
+
+    /// The property inspector of a key is shown (`propertyInspectorDidAppear`): send it the
+    /// current state, so an editor OpenDeck kept from earlier is up to date (language...).
+    pub fn on_editor_appear(&self, context: &str) {
+        self.send_status(context);
+    }
+
+    /// Decks connected at startup (`openaction::get_connected_devices`).
+    pub fn set_decks(&self, decks: BTreeMap<String, String>) {
+        self.lock().decks = decks;
+    }
+
+    pub fn on_deck_connected(&self, device: &str, name: &str) {
+        self.lock().decks.insert(device.to_owned(), name.to_owned());
+    }
+
+    /// A deck was unplugged: stop the macros started from it. Otherwise a looping macro
+    /// could not be stopped any more, since pressing its key is how it stops.
+    pub fn on_deck_disconnected(&self, device: &str) {
+        let mut st = self.lock();
+        let mut stopped = 0;
+        for (context, player) in &st.players {
+            if st.deck_of.get(context).map(String::as_str) == Some(device) {
+                player.stop.set();
+                stopped += 1;
+            }
+        }
+        st.decks.remove(device);
+        drop(st);
+        log!("deck {device} disconnected: {stopped} running macro(s) stopped");
     }
 
     /// Plugin-wide settings (`didReceiveGlobalSettings`).
@@ -589,6 +652,14 @@ impl Plugin {
             "stopPlay" => self.stop_playing(context),
             // ---- About tab
             "about" => {
+                // Read under one lock, before building the reply: two `self.lock()` calls in
+                // the same statement would deadlock (temporaries live to the end of it).
+                let (controller, decks) = {
+                    let st = self.lock();
+                    let controller =
+                        st.controllers.get(context).cloned().unwrap_or_else(|| "Keypad".to_owned());
+                    (controller, st.decks.values().cloned().collect::<Vec<_>>())
+                };
                 let about = json!({
                     "type": "about",
                     "version": env!("CARGO_PKG_VERSION"),
@@ -598,7 +669,8 @@ impl Plugin {
                     "logPath": log_path().to_string_lossy(),
                     "debug": DEBUG.load(Ordering::Relaxed),
                     "devices": self.input.status(),
-                    "controller": self.lock().controllers.get(context).cloned().unwrap_or_else(|| "Keypad".to_owned()),
+                    "controller": controller,
+                    "decks": decks,
                     "context": context,
                 });
                 self.to_pi(context, about);
@@ -617,6 +689,11 @@ impl Plugin {
                 }
                 log!("log cleared");
                 self.to_pi(context, json!({"type": "log", "text": read_log_tail(LOG_TAIL_BYTES)}));
+            }
+            "openUrl" => {
+                if let Some(url) = payload.get("target").and_then(Value::as_str).and_then(link_url) {
+                    self.send(Outgoing::OpenUrl { url });
+                }
             }
             "openLogFolder" => {
                 if let Err(e) = open_folder(&plugin_dir()) {
@@ -640,21 +717,25 @@ impl Plugin {
                     self.broadcast_to_editors(json!({"type": "language", "language": language}));
                 }
             }
-            "status" => {
-                let st = self.lock();
-                let status = json!({
-                    "type": "status",
-                    "recording": st.recording_ctx.as_deref() == Some(context),
-                    "playing": st.players.contains_key(context),
-                    "controller": st.controllers.get(context).map(String::as_str).unwrap_or("Keypad"),
-                    "platform": std::env::consts::OS,
-                    "language": st.globals.get("language").and_then(Value::as_str).unwrap_or("auto"),
-                });
-                drop(st);
-                self.to_pi(context, status);
-            }
+            "status" => self.send_status(context),
             _ => {}
         }
+    }
+
+    /// Sends the key's state to its property inspector: recording / playing, controller
+    /// type, OS (for key names) and the plugin-wide language.
+    fn send_status(&self, context: &str) {
+        let st = self.lock();
+        let status = json!({
+            "type": "status",
+            "recording": st.recording_ctx.as_deref() == Some(context),
+            "playing": st.players.contains_key(context),
+            "controller": st.controllers.get(context).map(String::as_str).unwrap_or("Keypad"),
+            "platform": std::env::consts::OS,
+            "language": st.globals.get("language").and_then(Value::as_str).unwrap_or("auto"),
+        });
+        drop(st);
+        self.to_pi(context, status);
     }
 
     /// Called when the connection ends: stop everything and release held keys.
@@ -678,6 +759,15 @@ mod tests {
         assert_eq!(bounded_delay(-5.0, 1.0), Duration::ZERO);
         assert_eq!(bounded_delay(1e300, 0.01), MAX_DELAY); // would overflow without the bound
         assert_eq!(bounded_delay(f64::INFINITY, 1.0), MAX_DELAY);
+    }
+
+    #[test]
+    fn only_known_links_can_be_opened() {
+        assert_eq!(link_url("repo").as_deref(), Some(REPOSITORY_URL));
+        assert!(link_url("issues").unwrap().starts_with(REPOSITORY_URL));
+        assert!(link_url("license").unwrap().starts_with(REPOSITORY_URL));
+        assert_eq!(link_url("https://example.com"), None);
+        assert_eq!(link_url(""), None);
     }
 
     #[test]

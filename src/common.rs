@@ -117,7 +117,29 @@ pub fn log_path() -> &'static Path {
     LOG_PATH.get_or_init(|| plugin_dir().join("plugin.log"))
 }
 
+/// Where log lines also go once the plugin is connected: OpenDeck's own log (see
+/// `host.rs`). Set once at startup.
+pub type LogSink = Box<dyn Fn(&str) + Send + Sync>;
+
+static LOG_SINK: OnceLock<LogSink> = OnceLock::new();
+
+pub fn set_log_sink(sink: LogSink) {
+    let _ = LOG_SINK.set(sink);
+}
+
+/// Writes a line to `plugin.log` and, except for verbose `[debug]` lines, to OpenDeck's log.
 pub fn write_log(message: &str) {
+    write_log_file_only(message);
+    if !message.starts_with("[debug]")
+        && let Some(sink) = LOG_SINK.get()
+    {
+        sink(message);
+    }
+}
+
+/// Writes a line to `plugin.log` only. Used for problems of the connection itself, which
+/// cannot be reported through that connection.
+pub fn write_log_file_only(message: &str) {
     let path = log_path();
     if std::fs::metadata(path).is_ok_and(|m| m.len() > LOG_MAX_BYTES) {
         let _ = std::fs::rename(path, path.with_extension("log.old"));

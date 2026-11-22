@@ -48,6 +48,11 @@ fn main() {
 
     runtime.block_on(async {
         let (queue, outgoing) = tokio::sync::mpsc::unbounded_channel();
+        // From now on, log lines also reach OpenDeck's own log ("[Keyboard Macros] ...").
+        let log_queue = queue.clone();
+        common::set_log_sink(Box::new(move |line| {
+            let _ = log_queue.send(plugin::Outgoing::LogMessage { message: line.to_owned() });
+        }));
         let plugin = plugin::Plugin::new(queue);
         tokio::spawn(host::deliver(outgoing));
         host::install(plugin.clone()).await;

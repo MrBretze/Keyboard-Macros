@@ -25,12 +25,13 @@ flowchart LR
 There is **one engine process for all the keys and dials** that use the plugin. It is not started when a key is pressed: it runs in the background as long as OpenDeck is open, like every OpenDeck and Stream Deck plugin.
 
 1. **OpenDeck starts.** It launches the executable that matches the system, as listed in `CodePaths` in `manifest.json`, with `-port <p> -pluginUUID <id> -registerEvent <event> -info <json>`.
-2. **The engine connects.** Through the [`openaction`](https://crates.io/crates/openaction) crate, the official Rust library of the OpenAction plugin API, it opens a WebSocket to `127.0.0.1:<port>`, registers itself, and asks for its global settings: the interface language and the verbose log switch.
+2. **The engine connects.** Through the [`openaction`](https://crates.io/crates/openaction) crate, the official Rust library of the OpenAction plugin API, it opens a WebSocket to `127.0.0.1:<port>`, registers itself, notes the decks listed in `-info`, and asks for its global settings: the interface language and the verbose log switch. From then on, the engine's log lines also go to OpenDeck's own log (`logMessage`), except verbose ones.
 3. **Idle.** The engine waits for messages. Measured on Linux: about 1.3 MB of memory and no measurable CPU time.
 4. **A key or dial appears** (`willAppear`), for example after a profile or page change. The engine receives that action's settings and shows its image.
 5. **A key is pressed** (`keyDown`, `dialDown`, `touchTap`, `dialRotate`). A playback thread replays the macro, then ends. See [Playback](#playback).
 6. **The editor asks to record.** A recording thread reads the keyboards until "Stop". See [Recording](#recording).
-7. **OpenDeck closes.** The WebSocket closes. The engine stops any recording or playback, releases the keys it still holds, removes its virtual devices and exits.
+7. **A deck is unplugged** (`deviceDidDisconnect`). The macros started from its keys stop: once the deck is gone, pressing the key again is no longer possible, so a looping macro would never end otherwise.
+8. **OpenDeck closes.** The WebSocket closes. The engine stops any recording or playback, releases the keys it still holds, removes its virtual devices and exits.
 
 ### Threads
 
@@ -119,10 +120,12 @@ A message for a key that has disappeared (page or profile change) is dropped: th
 | `keyDown`, `dialDown`, `touchTap` | Plays the press macro, or stops the current playback or recording |
 | `dialRotate` | Queues the turn macro once per notch |
 | `willDisappear` | Stops that key's playback |
+| `propertyInspectorDidAppear` | Sends the key's `status` to its editor, which may be one OpenDeck kept from earlier |
 | `didReceiveGlobalSettings` | Stores the plugin-wide settings (language, verbose log) |
+| `deviceDidConnect`, `deviceDidDisconnect` | Updates the list of decks (About tab); on disconnect, stops the macros started from that deck |
 | `sendToPlugin` | A command from the editor (see below) |
 
-**From the engine to OpenDeck:** `setState`, `setImage`, `setFeedback`, `setSettings`, `showAlert`, `getGlobalSettings`, `setGlobalSettings`, `sendToPropertyInspector`.
+**From the engine to OpenDeck:** `setState`, `setImage`, `setFeedback`, `setSettings`, `showAlert`, `showOk` (after a recording is saved), `getGlobalSettings`, `setGlobalSettings`, `sendToPropertyInspector`, `openUrl`, `logMessage`.
 
 **Commands from the editor** (`sendToPlugin`):
 
@@ -131,13 +134,14 @@ A message for a key that has disappeared (page or profile change) is dropped: th
 | `record`, `stopRecord` | Starts or stops a recording |
 | `play`, `stopPlay` | Starts or stops a test playback |
 | `status` | Replies with the recording and playing state, the controller type, the OS and the interface language |
-| `about`, `diagnostics` | Replies with the About tab information or the platform checks |
+| `about`, `diagnostics` | Replies with the About tab information (including the connected decks) or the platform checks |
+| `openUrl` | Opens one of the About tab links. The editor sends a `target` (`repo`, `issues` or `license`), never a URL: the engine only opens its own known pages. |
 | `readLog`, `clearLog`, `openLogFolder` | Reads or clears the log, or opens its folder in the file manager |
 | `setDebug`, `setLanguage` | Changes the verbose log switch or the interface language, and saves the global settings. A language change is also sent to the editor of every key, so the editors OpenDeck keeps open follow it at once. |
 
 **Replies to the editor** (`sendToPropertyInspector`, field `type`): `status`, `playing`, `recording`, `recordEvent`, `recorded`, `about`, `diagnostics`, `log`, `language`, `error`.
 
-OpenDeck keeps the editors it has already shown and displays them again without reloading them. An editor therefore asks for `status` again each time it becomes visible.
+OpenDeck keeps the editors it has already shown and displays them again without reloading them. The engine therefore sends `status` on `propertyInspectorDidAppear`, and the editor also asks for it when it becomes visible again, as a fallback.
 
 Errors are sent as **codes**, for example `uinput_failed` or `permission_accessibility`. The editor translates them, so the engine contains no user-facing text.
 

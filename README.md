@@ -66,7 +66,7 @@ The settings panel has a status bar with a "▶ Test" button, and six tabs:
 - **Appearance**: default icon, custom image or plain color, with or without text on top. The text has adjustable size, color, position, font, bold and outline. A state indicator (playing / recording) can be shown in a corner, with a preview of all 3 states.
 - **Language**: automatic (OpenDeck's language, then the system language) or forced. The choice applies to every key that uses the plugin.
 - **Import / Export**: the text area always shows the current macro as JSON, ready to copy. To import, paste or edit JSON there and click "Import".
-- **About**: installed version, platform, OpenDeck version and links (GitHub, report a problem, license).
+- **About**: installed version, platform, OpenDeck version, connected decks and links (GitHub, report a problem, license). After a recording is saved, the key briefly shows a check mark.
   - **Diagnostics** check what the plugin needs. On Linux: `/dev/uinput`, input device access, keyboards and mice available for recording. On Windows: the keyboard and mouse hooks. On macOS: the Accessibility and Input Monitoring permissions. "Copy report" puts everything useful for a bug report in the clipboard.
   - **Log** shows the end of `plugin.log`, with buttons to refresh, copy, open its folder or clear it. "Verbose log (debug)" also logs every message exchanged with OpenDeck and every replayed macro. It applies to all actions and is remembered. See [Security and privacy](#security-and-privacy).
 
@@ -91,8 +91,9 @@ Notches turned while a turn macro is playing are queued, up to 50. Turning the o
 - **What the plugin can do.** It can simulate any keyboard and mouse input, and, while you record, read every keyboard (and mouse, if enabled) on the system. This is why it needs the access described in [Requirements](#requirements).
 - **When it listens.** Only between "● Record" and "■ Stop". Recording does not block your devices: everything you type during a recording is recorded, in any window, **including passwords**. Do not type secrets while recording.
 - **Where macros are stored.** In the action settings, as plain text, in OpenDeck's profile files. Anyone who can read your OpenDeck configuration, or a profile you share, can read your macros.
-- **The log.** It records errors, device names and event counts, not what you type. The only key it may mention is one that cannot be replayed on your system. The verbose log (debug) records every message exchanged with OpenDeck, which includes macros and recorded keys. Turn it off when you are done, and check a report before you share it. Times are in UTC. Past 1 MB, the log is renamed `plugin.log.old` and a new one starts.
-- **Network.** The plugin only talks to OpenDeck, over a local connection (`127.0.0.1`). The links in the About tab are opened by OpenDeck in your browser.
+- **The log.** It records errors, device names and event counts, not what you type. These lines also appear in OpenDeck's own log, prefixed with `[Keyboard Macros]`. The only key it may mention is one that cannot be replayed on your system. The verbose log (debug) records every message exchanged with OpenDeck, which includes macros and recorded keys. Turn it off when you are done, and check a report before you share it. Times are in UTC. Past 1 MB, the log is renamed `plugin.log.old` and a new one starts.
+- **Network.** The plugin only talks to OpenDeck, over a local connection (`127.0.0.1`), using the official [`openaction`](https://crates.io/crates/openaction) crate. The links in the About tab are opened by OpenDeck in your browser. The plugin only opens its own three pages, whatever the editor asks.
+- **Unplugging a deck** stops the macros started from it, so a looping macro cannot keep running without a key to stop it.
 - **Limits that protect against mistakes:**
   - a recording keeps at most 100,000 events;
   - a single delay is capped at one hour;

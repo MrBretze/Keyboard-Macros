@@ -11,6 +11,7 @@ I18N.fr = {
 	"about.version": "Version {v}",
 	"about.platform": "Plateforme",
 	"about.host": "OpenDeck",
+	"about.decks": "Decks connectés",
 	"about.controller": "Contrôle",
 	"about.devices": "Périphériques virtuels",
 	"about.language": "Langue de l'interface",

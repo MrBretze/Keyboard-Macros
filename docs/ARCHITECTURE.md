@@ -131,9 +131,11 @@ All messages are JSON over the local WebSocket, following the Stream Deck SDK.
 | `status` | Replies with the recording and playing state, the controller type, the OS and the interface language |
 | `about`, `diagnostics` | Replies with the About tab information or the platform checks |
 | `readLog`, `clearLog`, `openLogFolder` | Reads or clears the log, or opens its folder in the file manager |
-| `setDebug`, `setLanguage` | Changes the verbose log switch or the interface language, and saves the global settings |
+| `setDebug`, `setLanguage` | Changes the verbose log switch or the interface language, and saves the global settings. A language change is also sent to the editor of every key, so the editors OpenDeck keeps open follow it at once. |
 
-**Replies to the editor** (`sendToPropertyInspector`, field `type`): `status`, `playing`, `recording`, `recordEvent`, `recorded`, `about`, `diagnostics`, `log`, `error`.
+**Replies to the editor** (`sendToPropertyInspector`, field `type`): `status`, `playing`, `recording`, `recordEvent`, `recorded`, `about`, `diagnostics`, `log`, `language`, `error`.
+
+OpenDeck keeps the editors it has already shown and displays them again without reloading them. An editor therefore asks for `status` again each time it becomes visible.
 
 Errors are sent as **codes**, for example `uinput_failed` or `permission_accessibility`. The editor translates them, so the engine contains no user-facing text.
 

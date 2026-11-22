@@ -228,6 +228,23 @@ impl Plugin {
         self.send(json!({"event": "setGlobalSettings", "context": self.plugin_uuid, "payload": globals}));
     }
 
+    /// Sends a message to the editor of every key and dial of this plugin. OpenDeck keeps
+    /// the editors it has already shown, so plugin-wide changes (the language) must reach
+    /// them too, not only the editor where the change was made.
+    fn broadcast_to_editors(&self, payload: &Value) {
+        let contexts: Vec<String> = {
+            let st = self.lock();
+            let mut all: Vec<String> =
+                st.settings.keys().chain(st.states.keys()).filter(|c| !c.is_empty()).cloned().collect();
+            all.sort_unstable();
+            all.dedup();
+            all
+        };
+        for context in contexts {
+            self.to_pi(&context, payload.clone());
+        }
+    }
+
     fn settings_of(&self, context: &str) -> Value {
         self.lock().settings.get(context).cloned().unwrap_or_else(|| json!({}))
     }
@@ -475,7 +492,9 @@ impl Plugin {
 
         {
             let mut st = self.lock();
-            if event != "sendToPlugin"
+            // Per-key settings only: commands carry their own, and global settings are not a key's.
+            if !matches!(event, "sendToPlugin" | "didReceiveGlobalSettings")
+                && !context.is_empty()
                 && let Some(settings) = payload.get("settings")
             {
                 st.settings.insert(context.to_owned(), settings.clone());
@@ -601,6 +620,7 @@ impl Plugin {
                         && language.chars().all(|c| c.is_ascii_alphabetic() || c == '-' || c == '_');
                 if valid {
                     self.set_global("language", json!(language));
+                    self.broadcast_to_editors(&json!({"type": "language", "language": language}));
                 }
             }
             "status" => {

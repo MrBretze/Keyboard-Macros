@@ -399,12 +399,7 @@ function onMessage(msg) {
 	switch (p.type) {
 		case "status":
 			if (p.controller) setController(p.controller);
-			// The plugin holds the language chosen for all keys: follow it.
-			if (p.language && p.language !== getLanguagePreference()) {
-				setLanguagePreference(p.language);
-				setLanguage(detectLanguage(hostInfo));
-				loadUI();
-			}
+			if (p.language) followPluginLanguage(p.language);
 			// The plugin reports the OS it really runs on: it decides the key names.
 			if (p.platform && normalizePlatform(p.platform) !== currentPlatform) {
 				setPlatform(p.platform);
@@ -430,6 +425,7 @@ function onMessage(msg) {
 			break;
 		case "playing":
 			state.playing = p.playing; setStatus(null); break;
+		case "language": followPluginLanguage(p.language); break; // changed from another key
 		case "about": aboutData = p; renderAbout(); break;
 		case "diagnostics": diagData = p.checks || []; renderDiagnostics(); break;
 		case "log": showLog(p.text || ""); break;
@@ -440,6 +436,23 @@ function onMessage(msg) {
 		}
 	}
 }
+
+// The plugin holds the language chosen for all keys: follow it.
+function followPluginLanguage(lang) {
+	if (!lang || lang === getLanguagePreference()) return;
+	setLanguagePreference(lang);
+	setLanguage(detectLanguage(hostInfo));
+	loadUI();
+	if (aboutData) renderAbout();
+	if (diagData) renderDiagnostics();
+}
+
+// OpenDeck keeps editors it has already shown and displays them again without reloading:
+// ask the plugin for the current state whenever this editor becomes visible again.
+document.addEventListener("visibilitychange", () => {
+	if (document.visibilityState === "visible") toPlugin({ cmd: "status" });
+});
+window.addEventListener("focus", () => toPlugin({ cmd: "status" }));
 
 // msg = null shows the live state (recording / playing / ready).
 function setStatus(msg) {

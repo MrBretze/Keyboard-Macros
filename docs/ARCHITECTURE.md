@@ -1,0 +1,179 @@
+# How Keyboard Macros works
+
+This document explains how the plugin runs inside OpenDeck: which processes exist, when they start and stop, what they say to each other, and where data is kept. For installation and usage, see the [README](../README.md).
+
+## Overview
+
+The plugin has two parts, which never talk to each other directly. OpenDeck relays every message between them.
+
+| Part | What it is | Where it runs | When it runs |
+|---|---|---|---|
+| **Engine** | A native executable (`keymacro-…`), written in Rust | Its own process, started by OpenDeck | All the time OpenDeck is open |
+| **Editor** (Property Inspector) | A web page (`pi/index.html`) | OpenDeck's embedded browser | Only while an action of the plugin is selected in OpenDeck |
+
+```mermaid
+flowchart LR
+    Deck[Stream Deck keys and dials] --> OD[OpenDeck]
+    OD <-->|WebSocket, 127.0.0.1| Engine[Engine: keymacro executable]
+    OD <-->|WebSocket, 127.0.0.1| Editor[Editor: pi/index.html]
+    Engine -->|simulates| OS[Keyboard and mouse of the OS]
+    OS -->|recording only| Engine
+```
+
+## Lifecycle of the engine
+
+There is **one engine process for all the keys and dials** that use the plugin. It is not started when a key is pressed: it runs in the background as long as OpenDeck is open, like every OpenDeck and Stream Deck plugin.
+
+1. **OpenDeck starts.** It launches the executable that matches the system, as listed in `CodePaths` in `manifest.json`, with `-port <p> -pluginUUID <id> -registerEvent <event> -info <json>`.
+2. **The engine connects.** It opens a WebSocket to `127.0.0.1:<port>`, registers itself, and asks for its global settings, which hold the verbose log switch.
+3. **Idle.** The engine waits for messages. Measured on Linux: about 1.3 MB of memory and no measurable CPU time.
+4. **A key or dial appears** (`willAppear`), for example after a profile or page change. The engine receives that action's settings and shows its image.
+5. **A key is pressed** (`keyDown`, `dialDown`, `touchTap`, `dialRotate`). A playback thread replays the macro, then ends. See [Playback](#playback).
+6. **The editor asks to record.** A recording thread reads the keyboards until "Stop". See [Recording](#recording).
+7. **OpenDeck closes.** The WebSocket closes. The engine stops any recording or playback, releases the keys it still holds, removes its virtual devices and exits.
+
+### Threads
+
+| Thread | Lives | Role |
+|---|---|---|
+| Main | Whole session | Decodes OpenDeck's messages and reacts to them (`src/main.rs`, `src/plugin.rs`) |
+| Network | Whole session | Owns the WebSocket: sends the queued messages and reads incoming ones (`src/ws.rs`). Any thread can send a message without waiting for a read. |
+| Playback | One per playing key, until its macro ends | Replays the events with their delays (`Plugin::play_pass`) |
+| Recording | From "Record" to "Stop" | Reads keyboards (and mice, if enabled) and turns them into events (`src/recorder.rs` and the platform backend) |
+
+The shared state (settings, key states, running playbacks, dial queues, current recording) sits behind a single lock in `Plugin`.
+
+## Playback
+
+```mermaid
+sequenceDiagram
+    participant D as Stream Deck
+    participant O as OpenDeck
+    participant E as Engine
+    participant S as OS input
+    D->>O: key pressed
+    O->>E: keyDown (with the action's settings)
+    E->>O: setState 1 + setImage (playing)
+    loop every event of the macro
+        E->>E: wait for its delay
+        E->>S: key / button / move / wheel
+    end
+    E->>O: setState 0 + setImage (ready)
+```
+
+- **Timing.** Delays are measured from absolute deadlines, so the time spent sending an event does not add up. The speed option divides the delays. The fixed delay replaces every delay except those of mouse movements. A single delay is capped at one hour.
+- **Repeats** apply to the press macro: a number of passes, or a loop until the key is pressed again. Pressing the key during playback stops it.
+- **Dials.** Each rotation notch queues one pass of the turn macro, up to 50 queued notches. Turning the other way drops the queued notches of the previous direction. A turn is ignored while the press macro is playing.
+- **Virtual devices.** On Linux, the first playback creates a virtual keyboard and, if needed, a virtual mouse through `/dev/uinput`. This takes about 300 ms, before the timing starts. They are kept until OpenDeck closes. Windows and macOS need no device.
+- **End.** The engine releases every key and button it still holds, even if the macro was interrupted.
+
+## Recording
+
+1. In the editor, "● Record" sends the `record` command, with the macro being recorded (press or a turn direction) and the mouse options.
+2. The engine starts the platform recorder:
+
+   | System | Method |
+   |---|---|
+   | Linux | Reads `/dev/input/event*` read-only, without grabbing the devices |
+   | Windows | Low-level keyboard and mouse hooks |
+   | macOS | A listen-only event tap |
+
+   The engine's own simulated input is ignored.
+3. `RecorderCore` (`src/recorder.rs`) turns raw input into macro events:
+   - it ignores auto-repeat, and the release of keys pressed before the recording;
+   - it merges mouse movements over about 12 ms;
+   - it computes each delay;
+   - it streams each event to the editor for the live display.
+4. "■ Stop" in the editor, or a press on the deck key, ends the recording. A stop from the editor removes the click on the Stop button and the movement to reach it. Keys still held get a release event. A recording keeps at most 100,000 events.
+5. The engine stores the events in the action settings (`setSettings`) and sends them to the editor.
+
+Nothing is read from the keyboards outside of a recording.
+
+## The editor
+
+The editor is a plain web page with no framework (`pi/`):
+
+| File | Role |
+|---|---|
+| `index.html` | Layout, tabs, macro table, and the code that talks to OpenDeck |
+| `keys.js` | Key table (Linux evdev codes) and per-platform key names |
+| `i18n.js`, `locales/*.js` | Translations |
+| `appearance.js` | Draws the custom key images with a canvas |
+
+It saves the action settings itself (`setSettings`) and sends commands to the engine with `sendToPlugin`.
+
+The engine has no graphics library. **Custom key images are therefore drawn by the editor**, one per state (ready, playing, recording), and stored as PNG data URLs in the settings. The engine then sends the right one with `setImage` (and with `setFeedback` for a dial's touch strip) each time the state changes.
+
+## Messages
+
+All messages are JSON over the local WebSocket, following the Stream Deck SDK.
+
+**From OpenDeck to the engine:**
+
+| Event | Engine reaction |
+|---|---|
+| `willAppear` | Stores the settings and controller type (key or dial), shows the image |
+| `didReceiveSettings` | Stores the new settings and updates the image |
+| `keyDown`, `dialDown`, `touchTap` | Plays the press macro, or stops the current playback or recording |
+| `dialRotate` | Queues the turn macro once per notch |
+| `willDisappear` | Stops that key's playback |
+| `didReceiveGlobalSettings` | Turns the verbose log on or off |
+| `sendToPlugin` | A command from the editor (see below) |
+
+**From the engine to OpenDeck:** `setState`, `setImage`, `setFeedback`, `setSettings`, `showAlert`, `getGlobalSettings`, `setGlobalSettings`, `sendToPropertyInspector`.
+
+**Commands from the editor** (`sendToPlugin`):
+
+| Command | What the engine does |
+|---|---|
+| `record`, `stopRecord` | Starts or stops a recording |
+| `play`, `stopPlay` | Starts or stops a test playback |
+| `status` | Replies with the recording and playing state, the controller type and the OS |
+| `about`, `diagnostics` | Replies with the About tab information or the platform checks |
+| `readLog`, `clearLog`, `openLogFolder` | Reads or clears the log, or opens its folder in the file manager |
+| `setDebug` | Turns the verbose log on or off and saves it in the global settings |
+
+**Replies to the editor** (`sendToPropertyInspector`, field `type`): `status`, `playing`, `recording`, `recordEvent`, `recorded`, `about`, `diagnostics`, `log`, `error`.
+
+Errors are sent as **codes**, for example `uinput_failed` or `permission_accessibility`. The editor translates them, so the engine contains no user-facing text.
+
+## Data
+
+**Action settings**, stored by OpenDeck in its profile files, as plain text:
+
+| Key | Content |
+|---|---|
+| `events` | Press macro |
+| `eventsCW`, `eventsCCW` | Dial turn macros (right, left) |
+| `speed`, `repeat`, `repeatDelay`, `useFixedDelay`, `fixedDelay` | Playback options |
+| `recordMouse`, `recordMouseMove` | Recording options |
+| `layout` | AZERTY / QWERTY names in the table |
+| `appearance` | Appearance options, including the uploaded image |
+| `images` | The rendered key images, one per state |
+
+**Event format** (identical on every system):
+
+```json
+{"code": 30, "down": true, "delay": 0}
+{"type": "move", "dx": 12, "dy": -3, "delay": 8}
+{"type": "wheel", "dx": 0, "dy": 1, "delay": 120}
+```
+
+`code` is a Linux evdev code, which identifies a **physical** key, so a macro replays the same keys whatever the keyboard layout. The Windows and macOS backends translate it with their own tables. `delay` is in milliseconds since the previous event. An event can also carry `"disabled": true`.
+
+**Global settings**: `debug`, the verbose log switch.
+
+**Editor preferences**, saved in the browser storage of OpenDeck: the interface language, and the last open tab (for the current session only).
+
+**Log**: `plugin.log` in the plugin folder, with times in UTC. Past 1 MB it is renamed `plugin.log.old` and a new one starts.
+
+## Source map
+
+| File | Role |
+|---|---|
+| `src/main.rs` | Arguments, connection, main loop |
+| `src/ws.rs` | WebSocket thread |
+| `src/plugin.rs` | Events, playback, dial queue, recording control, images, editor commands |
+| `src/recorder.rs` | Platform-independent recording logic |
+| `src/common.rs` | Event format, key codes, logging |
+| `src/input/linux.rs`, `windows.rs`, `macos.rs` | Simulation, capture and diagnostics for each system |

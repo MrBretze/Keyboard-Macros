@@ -107,6 +107,9 @@ To report a security problem, open an issue on GitHub, without sensitive details
 
 ## How it works
 
+For the full picture (the engine process and its threads, playback and recording step by step, the messages exchanged with OpenDeck, and where data is stored), see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). In short:
+
+- The engine is a **single background process**, started by OpenDeck and running as long as OpenDeck is open, for all the keys that use the plugin. It uses about 1 MB of memory and no CPU while idle. The editor is a web page shown by OpenDeck only while an action is selected.
 - Macros store **physical key** codes (Linux evdev codes). A macro replays the same physical keys whatever the keyboard layout, on every operating system. The AZERTY/QWERTY selector only changes the key names shown in the table.
 - **Mouse movements** are relative, merged over about 12 ms so the macro stays readable. The fixed delay option does not apply to them, so gestures keep their speed.
 - **Linux**:
@@ -160,6 +163,7 @@ Every push and pull request runs the tests and builds all platforms on GitHub Ac
 | `pi/keys.js` | Key table and per-platform key names |
 | `install.sh`, `install.ps1` | Build from source and install (Linux, Windows) |
 | `.github/workflows/release.yml` | Tests, builds and packages all platforms |
+| `docs/ARCHITECTURE.md` | How the plugin works inside OpenDeck |
 | `rustfmt.toml` | Formatting settings |
 | `data/` | Logo and screenshot used by this README |
 

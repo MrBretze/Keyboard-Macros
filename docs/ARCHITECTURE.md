@@ -85,7 +85,7 @@ sequenceDiagram
    - it merges mouse movements over about 12 ms;
    - it computes each delay;
    - it streams each event to the editor for the live display.
-4. "■ Stop" in the editor, or a press on the deck key, ends the recording. A stop from the editor removes the click on the Stop button and the trip to reach it: the last continuous movement before the click, which ends at the first pause of 250 ms and never covers more than 1.5 s, so a gesture made before is kept. Keys still held get a release event. A recording keeps at most 100,000 events.
+4. "■ Stop" in the editor, or a press on the deck key, ends the recording. The editor's Stop acts on press, not on release: a click is lost if anything moves between press and release. It then shows "Stopping…" until the engine confirms, asks for `status` again if no confirmation comes within 2 s, and ignores the release of that same press, which must not start a new recording. A stop from the editor removes the click on the Stop button (if it was read before the stop) and the trip to reach it: the last continuous movement before the click, which ends at the first pause of 250 ms and never covers more than 1.5 s, so a gesture made before is kept. Keys still held get a release event. A recording keeps at most 100,000 events.
 5. The engine stores the events in the action settings (`setSettings`) and sends them to the editor.
 
 Nothing is read from the keyboards outside of a recording.
@@ -131,7 +131,7 @@ A message for a key that has disappeared (page or profile change) is dropped: th
 
 | Command | What the engine does |
 |---|---|
-| `record`, `stopRecord` | Starts or stops a recording |
+| `record`, `stopRecord` | Starts or stops a recording. A `stopRecord` with nothing to stop replies with `status`, so the editor resynchronises |
 | `play`, `stopPlay` | Starts or stops a test playback |
 | `status` | Replies with the recording and playing state, the controller type, the OS and the interface language |
 | `about`, `diagnostics` | Replies with the About tab information (including the connected decks) or the platform checks |

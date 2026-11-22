@@ -48,7 +48,9 @@
 	.row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
 	.row label { color: var(--muted); }
 	.grow { flex: 1; }
-	#status { padding: 6px 8px; border-radius: 4px; background: var(--panel); margin-top: 6px; }
+	/* One line, always: if the status changed height, the buttons below would move under the cursor. */
+	#status { padding: 6px 8px; border-radius: 4px; background: var(--panel); margin-top: 6px;
+		white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 	#status.recording { background: rgba(229,72,77,.2); color: #ffb3b5; }
 	#status.playing { background: rgba(48,164,108,.2); color: #9be2bd; }
 	#status.error { background: rgba(245,165,36,.2); color: #ffd58a; }
@@ -87,7 +89,7 @@
 	body.base-image .when-image, body.base-image .when-custom, body.base-color .when-custom { display: flex; }
 	.thumb { width: 28px; height: 28px; object-fit: cover; border-radius: 4px; box-shadow: 0 0 0 1px var(--line); }
 	.topbar { display: flex; gap: 8px; align-items: stretch; margin-bottom: 8px; }
-	.topbar #status { flex: 1; margin-top: 0; display: flex; flex-direction: column; justify-content: center; }
+	.topbar #status { flex: 1; min-width: 0; margin-top: 0; }
 	.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 10px; flex-wrap: wrap; }
 	.tab { background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0;
 		color: var(--muted); padding: 6px 10px; margin-bottom: -1px; }
@@ -335,6 +337,10 @@
 let ws = null, ctx = null, actionUUID = null, hostInfo = null;
 let settings = {};
 let liveRec = null;   // events streamed by the backend while recording
+let recordingDevices = ""; // devices read by the current recording (status tooltip)
+let stopping = false;  // a stop was requested and is not confirmed yet
+let stopTimer = null;
+let ignoreClickUntil = 0; // swallow the click that follows a stop made on press
 let history = [];     // undo stack (JSON snapshots of the edited macro)
 let slot = "events";  // edited macro: "events" (press), "eventsCW" / "eventsCCW" (dial turns)
 let isEncoder = false;
@@ -407,17 +413,21 @@ function onMessage(msg) {
 				renderRows();
 			}
 			state.recording = p.recording; state.playing = p.playing;
-			if (p.recording) liveRec = [];
+			// Keep the live list during a recording (status also arrives when the window
+			// regains focus); drop a stale one when nothing is recording.
+			if (p.recording && !liveRec) liveRec = [];
+			if (!p.recording) { liveRec = null; stopDone(); renderRows(); }
 			setStatus(null); break;
 		case "recording":
 			state.recording = true; liveRec = [];
-			setStatus({ key: "status.recordingHelp", extraKey: "status.devices", extraParams: { list: p.devices.join(", ") } });
+			recordingDevices = (p.devices || []).join(", ");
+			setStatus(null);
 			renderRows(); break;
 		case "recordEvent":
 			if (liveRec) { liveRec.push(p.event); scheduleLiveRender(); }
 			break;
 		case "recorded":
-			state.recording = false; liveRec = null;
+			state.recording = false; liveRec = null; stopDone();
 			pushHistory();
 			if (p.slot && p.slot !== slot) selectSlot(p.slot);
 			setEvs(p.events);
@@ -464,17 +474,20 @@ function renderStatus() {
 	const s = $("status");
 	const msg = statusMsg;
 	s.className = (msg && msg.cls) || (state.recording ? "recording" : state.playing ? "playing" : "");
+	let title = "";
 	if (state.recording && (!msg || !msg.cls)) {
-		let html = "<span class='dot'></span>" + escapeHtml(t("status.recording", { n: liveRec ? liveRec.length : 0 }));
-		if (msg && msg.key === "status.recordingHelp") html = "<span class='dot'></span>" + escapeHtml(t(msg.key));
-		if (msg && msg.extraKey) html += "<br><span class='hint'>" + escapeHtml(t(msg.extraKey, msg.extraParams)) + "</span>";
-		s.innerHTML = html;
+		const text = t("status.recording", { n: liveRec ? liveRec.length : 0 }) + " · " + t("status.recordingHelp");
+		s.innerHTML = "<span class='dot'></span>" + escapeHtml(text);
+		// Details stay in the tooltip, so the bar keeps a single line.
+		title = text + (recordingDevices ? "\n" + t("status.devices", { list: recordingDevices }) : "");
 	} else if (msg) {
-		s.textContent = t(msg.key, msg.params);
+		s.textContent = title = t(msg.key, msg.params);
 	} else {
-		s.textContent = t(state.playing ? "status.playing" : "status.ready");
+		s.textContent = title = t(state.playing ? "status.playing" : "status.ready");
 	}
-	$("btnRec").textContent = t(state.recording ? "rec.stop" : "rec.start");
+	s.title = title;
+	$("btnRec").textContent = t(stopping ? "rec.stopping" : state.recording ? "rec.stop" : "rec.start");
+	$("btnRec").disabled = stopping;
 	$("btnPlay").textContent = t(state.playing ? "play.stop" : "play.test");
 	$("btnPlay").disabled = state.recording;
 }
@@ -732,7 +745,42 @@ $("json").addEventListener("input", () => (jsonDirty = true));
 $("revertJson").onclick = () => refreshJson(true);
 
 // ---------------------------------------------------------------- controls
-$("btnRec").onclick = () => toPlugin(state.recording ? { cmd: "stopRecord" } : { cmd: "record", append: $("append").checked, slot, mouse: !!settings.recordMouse, mouseMove: settings.recordMouseMove !== false });
+// Stop acts on press, not on release: a click is cancelled by the browser if anything
+// moves between press and release, and the first click on an inactive window may only
+// focus it. The button then shows "Stopping…" until the plugin confirms.
+$("btnRec").addEventListener("pointerdown", (e) => {
+	if (state.recording && !stopping && e.button === 0) {
+		e.preventDefault();
+		// The "click" of this same press arrives on release, possibly after the plugin has
+		// already confirmed the stop: it must not start a new recording.
+		ignoreClickUntil = Date.now() + 1500;
+		requestStop();
+	}
+});
+$("btnRec").onclick = () => {
+	if (Date.now() < ignoreClickUntil) { ignoreClickUntil = 0; return; }
+	if (!state.recording && !stopping)
+		toPlugin({ cmd: "record", append: $("append").checked, slot, mouse: !!settings.recordMouse, mouseMove: settings.recordMouseMove !== false });
+};
+// Keyboard users (Enter / Space on the focused button) also get a stop.
+$("btnRec").addEventListener("keydown", (e) => {
+	if ((e.key === "Enter" || e.key === " ") && state.recording && !stopping) { e.preventDefault(); requestStop(); }
+});
+
+function requestStop() {
+	stopping = true;
+	renderStatus();
+	toPlugin({ cmd: "stopRecord" });
+	// If the plugin does not confirm (message lost, key changed...), resynchronise.
+	clearTimeout(stopTimer);
+	stopTimer = setTimeout(() => { if (stopping) { stopDone(); toPlugin({ cmd: "status" }); } }, 2000);
+}
+
+function stopDone() {
+	stopping = false;
+	clearTimeout(stopTimer);
+	renderStatus();
+}
 $("btnPlay").onclick = () => toPlugin(state.playing ? { cmd: "stopPlay" } : { cmd: "play", settings, slot });
 
 for (const id of ["speed", "repeat", "repeatDelay", "fixedDelay"]) {

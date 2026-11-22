@@ -1,5 +1,6 @@
 // English (reference language: every key must exist here).
 I18N.en = {
+	"rec.stopping": "Stopping…",
 	"confirm.again": "Click again to confirm",
 	"diagHelp.inputMonitoring": "→ System Settings → Privacy & Security → Input Monitoring: allow OpenDeck, then restart it.",
 	"diagHelp.accessibility": "→ System Settings → Privacy & Security → Accessibility: allow OpenDeck, then restart it.",
@@ -85,7 +86,7 @@ I18N.en = {
 
 	"status.ready": "Ready.",
 	"status.recording": "Recording… {n} events",
-	"status.recordingHelp": "Recording… type your macro, then click Stop (or press the deck key).",
+	"status.recordingHelp": "click Stop or press the deck key to finish",
 	"status.devices": "Keyboards: {list}",
 	"status.recorded": "{n} events recorded.",
 	"status.playing": "Playing…",

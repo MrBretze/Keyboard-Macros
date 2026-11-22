@@ -165,39 +165,42 @@ impl RecorderCore {
     /// That tail is not part of the macro. The trip is the last continuous movement before
     /// the click; a pause ends it, so a gesture made before is kept.
     fn trim_stop_click(&mut self) {
+        fn is_left(e: &Value, down: bool) -> bool {
+            is_type(e, "key")
+                && e.get("code").and_then(Value::as_u64) == Some(u64::from(BTN_LEFT))
+                && e.get("down").and_then(Value::as_bool) == Some(down)
+        }
         fn pop_moves(events: &mut Vec<Value>) {
             while events.last().is_some_and(|e| is_type(e, "move")) {
                 events.pop();
             }
         }
-        fn pop_left(events: &mut Vec<Value>, down: bool) -> bool {
-            let is_left = events.last().is_some_and(|e| {
-                is_type(e, "key")
-                    && e.get("code").and_then(Value::as_u64) == Some(u64::from(BTN_LEFT))
-                    && e.get("down").and_then(Value::as_bool) == Some(down)
-            });
-            if is_left {
-                events.pop();
-            }
-            is_left
-        }
         let delay = |e: &Value| e.get("delay").and_then(Value::as_u64).unwrap_or(0);
 
-        pop_moves(&mut self.events); // after the release
-        let _ = pop_left(&mut self.events, false);
-        pop_moves(&mut self.events); // between press and release
-        let Some(click) = self.events.last().filter(|e| {
-            is_type(e, "key")
-                && e.get("code").and_then(Value::as_u64) == Some(u64::from(BTN_LEFT))
-                && e.get("down").and_then(Value::as_bool) == Some(true)
-        }) else {
-            return;
-        };
+        // The last event that is not a movement tells how the recording ended:
+        // - left release: the whole click was read (press, release, maybe moves in between);
+        // - left press: the stop came before the release;
+        // - anything else: the stop came before the press (the editor stops on press), so
+        //   only the trip to the button is there.
+        let last_action = self.events.iter().rev().find(|e| !is_type(e, "move"));
+        let ended_with_release = last_action.is_some_and(|e| is_left(e, false));
+        let ended_with_press = last_action.is_some_and(|e| is_left(e, true));
+        if ended_with_release {
+            pop_moves(&mut self.events); // after the release
+            self.events.pop(); // the release
+            pop_moves(&mut self.events); // between press and release
+        } else if ended_with_press {
+            pop_moves(&mut self.events); // while the button was held
+        }
+        let clicked = self.events.last().is_some_and(|e| is_left(e, true));
+
         // Walk back over the trip: each move's following gap must be short (continuous
         // motion). The gap before the click itself is the user aiming at the button, so it
         // may be longer.
-        let mut gap_after = delay(click);
-        let _ = pop_left(&mut self.events, true);
+        let mut gap_after = if clicked { self.events.last().map_or(0, delay) } else { 0 };
+        if clicked {
+            self.events.pop();
+        }
         let mut trip_ms: u64 = 0; // duration of the trip itself, aiming time excluded
         let mut first = true;
         while let Some(last) = self.events.last() {
@@ -348,6 +351,22 @@ mod tests {
         );
         assert_eq!(total_move(&evs), (600, 200), "the gesture is kept, the trip is dropped");
         assert!(!evs.iter().any(|e| e["code"] == BTN_LEFT), "the Stop click is dropped");
+    }
+
+    #[test]
+    fn trip_is_dropped_even_if_the_stop_press_was_not_recorded() {
+        let evs = record(
+            |r| {
+                for i in 0..200 {
+                    r.feed_move(3, 1, f64::from(i) * 0.005); // gesture
+                }
+                for i in 0..60 {
+                    r.feed_move(-5, 2, 2.0 + f64::from(i) * 0.005); // trip; the stop came first
+                }
+            },
+            true,
+        );
+        assert_eq!(total_move(&evs), (600, 200));
     }
 
     #[test]

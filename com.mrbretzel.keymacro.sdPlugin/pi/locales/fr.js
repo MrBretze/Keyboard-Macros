@@ -1,5 +1,6 @@
 // French translation.
 I18N.fr = {
+	"rec.stopping": "Arrêt…",
 	"confirm.again": "Cliquer à nouveau pour confirmer",
 	"diagHelp.inputMonitoring": "→ Réglages Système → Confidentialité et sécurité → Surveillance de l'entrée : autorisez OpenDeck, puis redémarrez-le.",
 	"diagHelp.accessibility": "→ Réglages Système → Confidentialité et sécurité → Accessibilité : autorisez OpenDeck, puis redémarrez-le.",
@@ -85,7 +86,7 @@ I18N.fr = {
 
 	"status.ready": "Prêt.",
 	"status.recording": "Enregistrement… {n} événements",
-	"status.recordingHelp": "Enregistrement… tapez votre macro puis cliquez Stop (ou appuyez sur la touche du deck).",
+	"status.recordingHelp": "cliquez sur Stop ou appuyez sur la touche du deck pour terminer",
 	"status.devices": "Claviers : {list}",
 	"status.recorded": "{n} événements enregistrés.",
 	"status.playing": "Lecture en cours…",

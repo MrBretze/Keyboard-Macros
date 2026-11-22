@@ -680,7 +680,15 @@ impl Plugin {
                 };
                 self.start_recording(context, flag("append").unwrap_or(false), slot, options);
             }
-            "stopRecord" => self.stop_recording(true),
+            "stopRecord" => {
+                if self.is_recording(context) {
+                    self.stop_recording(true);
+                } else {
+                    // Nothing to stop (already stopped, or another key records): let the
+                    // editor resynchronise instead of waiting for a "recorded" that won't come.
+                    self.send_status(context);
+                }
+            }
             "play" => {
                 if let Some(settings) = payload.get("settings") {
                     self.lock().settings.insert(context.to_owned(), settings.clone());

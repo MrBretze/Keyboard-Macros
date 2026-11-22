@@ -1,6 +1,6 @@
 [package]
 name = "keymacro"
-version = "2.1.0"
+version = "2.1.1"
 edition = "2024"
 rust-version = "1.85" # first release with edition 2024
 description = "OpenDeck plugin: record, edit and replay keyboard and mouse macros"

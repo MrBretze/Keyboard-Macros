@@ -99,6 +99,8 @@ struct State {
     turns: HashMap<String, PendingTurns>,
     recorder: Option<RecorderHandle>,
     recording_ctx: Option<String>,
+    /// Plugin-wide settings shared by every key: {"debug": bool, "language": "auto" | "en" | ...}.
+    globals: Value,
 }
 
 pub struct Plugin {
@@ -210,6 +212,20 @@ impl Plugin {
             }
         }
         self.send_event("setImage", context, payload);
+    }
+
+    /// Changes one plugin-wide setting and saves them all. OpenDeck replaces the whole
+    /// global settings object on save, so the other values must be sent along.
+    fn set_global(&self, key: &str, value: Value) {
+        let globals = {
+            let mut st = self.lock();
+            if !st.globals.is_object() {
+                st.globals = json!({});
+            }
+            st.globals[key] = value;
+            st.globals.clone()
+        };
+        self.send(json!({"event": "setGlobalSettings", "context": self.plugin_uuid, "payload": globals}));
     }
 
     fn settings_of(&self, context: &str) -> Value {
@@ -496,8 +512,11 @@ impl Plugin {
             }
             "willDisappear" => self.stop_playing(context),
             "didReceiveGlobalSettings" => {
-                let debug = payload.pointer("/settings/debug").and_then(Value::as_bool).unwrap_or(false);
-                DEBUG.store(debug, Ordering::Relaxed);
+                let globals =
+                    payload.get("settings").filter(|v| v.is_object()).cloned().unwrap_or_else(|| json!({}));
+                DEBUG
+                    .store(globals.get("debug").and_then(Value::as_bool).unwrap_or(false), Ordering::Relaxed);
+                self.lock().globals = globals;
             }
             "sendToPlugin" => self.handle_command(context, payload),
             _ => {}
@@ -572,7 +591,17 @@ impl Plugin {
                 let enabled = flag("enabled").unwrap_or(false);
                 DEBUG.store(enabled, Ordering::Relaxed);
                 log!("verbose logging {}", if enabled { "enabled" } else { "disabled" });
-                self.send(json!({"event": "setGlobalSettings", "context": self.plugin_uuid, "payload": {"debug": enabled}}));
+                self.set_global("debug", json!(enabled));
+            }
+            "setLanguage" => {
+                // "auto" or a short language code ("en", "fr", "pt-BR"...): anything else is ignored.
+                let language = payload.get("language").and_then(Value::as_str).unwrap_or("");
+                let valid = language == "auto"
+                    || (2..=8).contains(&language.len())
+                        && language.chars().all(|c| c.is_ascii_alphabetic() || c == '-' || c == '_');
+                if valid {
+                    self.set_global("language", json!(language));
+                }
             }
             "status" => {
                 let st = self.lock();
@@ -582,6 +611,7 @@ impl Plugin {
                     "playing": st.players.contains_key(context),
                     "controller": st.controllers.get(context).map(String::as_str).unwrap_or("Keypad"),
                     "platform": std::env::consts::OS,
+                    "language": st.globals.get("language").and_then(Value::as_str).unwrap_or("auto"),
                 });
                 drop(st);
                 self.to_pi(context, status);

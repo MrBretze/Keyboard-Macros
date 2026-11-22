@@ -399,6 +399,12 @@ function onMessage(msg) {
 	switch (p.type) {
 		case "status":
 			if (p.controller) setController(p.controller);
+			// The plugin holds the language chosen for all keys: follow it.
+			if (p.language && p.language !== getLanguagePreference()) {
+				setLanguagePreference(p.language);
+				setLanguage(detectLanguage(hostInfo));
+				loadUI();
+			}
 			// The plugin reports the OS it really runs on: it decides the key names.
 			if (p.platform && normalizePlatform(p.platform) !== currentPlatform) {
 				setPlatform(p.platform);
@@ -465,7 +471,7 @@ function loadUI() {
 	$("useFixedDelay").checked = !!settings.useFixedDelay;
 	updateMouseOptionsUI();
 	$("layout").value = currentLayout();
-	$("lang").value = getStoredLanguage();
+	$("lang").value = getLanguagePreference();
 	fillDatalist();
 	renderRows();
 	renderStatus();
@@ -828,7 +834,9 @@ $("import").onclick = () => {
 };
 
 $("lang").onchange = () => {
-	storeLanguage($("lang").value);
+	// Plugin-wide: saved by the plugin, so every key's editor uses it.
+	setLanguagePreference($("lang").value);
+	toPlugin({ cmd: "setLanguage", language: $("lang").value });
 	setLanguage(detectLanguage(hostInfo));
 	loadUI();
 };

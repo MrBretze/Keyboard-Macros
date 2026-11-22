@@ -71,7 +71,7 @@ I18N.en = {
 	"tab.language": "Language",
 	"tab.json": "Import / Export",
 	"hint.playback": "These options apply when the deck key is pressed and when “Test” is clicked.",
-	"hint.language": "Automatic uses OpenDeck's language, then the system language. The choice is saved on this computer.",
+	"hint.language": "Automatic uses OpenDeck's language, then the system language. The choice applies to every key that uses this plugin.",
 	"btn.revertJson": "Reset",
 	"title.revertJson": "Discard your edits and show the current macro again",
 	"hint.jsonEdit": "This text is the current macro: copy it to export it. To import, paste or edit JSON here, then click Import.",

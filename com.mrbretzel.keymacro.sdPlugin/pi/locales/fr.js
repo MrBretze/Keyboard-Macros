@@ -71,7 +71,7 @@ I18N.fr = {
 	"tab.language": "Langue",
 	"tab.json": "Import / Export",
 	"hint.playback": "Ces options s'appliquent à l'appui sur la touche du deck et au bouton « Tester ».",
-	"hint.language": "Automatique utilise la langue d'OpenDeck, puis celle du système. Le choix est mémorisé sur cet ordinateur.",
+	"hint.language": "Automatique utilise la langue d'OpenDeck, puis celle du système. Le choix s'applique à toutes les touches qui utilisent ce plugin.",
 	"btn.revertJson": "Réinitialiser",
 	"title.revertJson": "Annuler vos modifications et réafficher la macro actuelle",
 	"hint.jsonEdit": "Ce texte est la macro actuelle : copiez-le pour l'exporter. Pour importer, collez ou modifiez le JSON ici puis cliquez sur Importer.",

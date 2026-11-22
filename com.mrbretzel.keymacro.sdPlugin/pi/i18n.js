@@ -11,14 +11,19 @@ const FALLBACK_LANG = "en";
 const LANG_STORAGE_KEY = "keymacro.lang";
 let currentLang = FALLBACK_LANG;
 
-// Picks the language: user override (stored), then the host application language,
+// Language chosen in the Language tab: "auto" or a language code. It is plugin-wide:
+// the plugin saves it in its global settings and sends it back to every key's editor
+// (see setLanguagePreference). The browser storage only keeps a copy, so that the
+// editor opens in the right language before the plugin has answered.
+let languagePreference = (() => {
+	try { return localStorage.getItem(LANG_STORAGE_KEY) || "auto"; } catch (e) { return "auto"; }
+})();
+
+// Picks the language: the user's choice, then the host application language,
 // then the browser / system language, then English.
 function detectLanguage(info) {
 	const candidates = [];
-	try {
-		const stored = localStorage.getItem(LANG_STORAGE_KEY);
-		if (stored && stored !== "auto") candidates.push(stored);
-	} catch (e) { /* storage may be unavailable */ }
+	if (languagePreference !== "auto") candidates.push(languagePreference);
 	if (info && info.application && info.application.language) candidates.push(info.application.language);
 	for (const l of navigator.languages || [navigator.language]) candidates.push(l);
 	for (const c of candidates) {
@@ -28,12 +33,13 @@ function detectLanguage(info) {
 	return FALLBACK_LANG;
 }
 
-function getStoredLanguage() {
-	try { return localStorage.getItem(LANG_STORAGE_KEY) || "auto"; } catch (e) { return "auto"; }
+function getLanguagePreference() {
+	return languagePreference;
 }
 
-function storeLanguage(lang) {
-	try { localStorage.setItem(LANG_STORAGE_KEY, lang); } catch (e) { /* ignore */ }
+function setLanguagePreference(lang) {
+	languagePreference = lang || "auto";
+	try { localStorage.setItem(LANG_STORAGE_KEY, languagePreference); } catch (e) { /* ignore */ }
 }
 
 function setLanguage(lang) {

@@ -64,7 +64,7 @@ The settings panel has a status bar with a "▶ Test" button, and six tabs:
   - Delay tools: multiply, set, round or cap all delays, or remove all mouse movements (their delays move to the next event, so the timing is unchanged).
 - **Playback**: speed in %, number of repeats (0 = loop), pause between repeats, fixed delay instead of the recorded ones.
 - **Appearance**: default icon, custom image or plain color, with or without text on top. The text has adjustable size, color, position, font, bold and outline. A state indicator (playing / recording) can be shown in a corner, with a preview of all 3 states.
-- **Language**: automatic (OpenDeck's language, then the system language) or forced. The choice is saved on this computer.
+- **Language**: automatic (OpenDeck's language, then the system language) or forced. The choice applies to every key that uses the plugin.
 - **Import / Export**: the text area always shows the current macro as JSON, ready to copy. To import, paste or edit JSON there and click "Import".
 - **About**: installed version, platform, OpenDeck version and links (GitHub, report a problem, license).
   - **Diagnostics** check what the plugin needs. On Linux: `/dev/uinput`, input device access, keyboards and mice available for recording. On Windows: the keyboard and mouse hooks. On macOS: the Accessibility and Input Monitoring permissions. "Copy report" puts everything useful for a bug report in the clipboard.

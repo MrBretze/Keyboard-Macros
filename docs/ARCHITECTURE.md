@@ -25,7 +25,7 @@ flowchart LR
 There is **one engine process for all the keys and dials** that use the plugin. It is not started when a key is pressed: it runs in the background as long as OpenDeck is open, like every OpenDeck and Stream Deck plugin.
 
 1. **OpenDeck starts.** It launches the executable that matches the system, as listed in `CodePaths` in `manifest.json`, with `-port <p> -pluginUUID <id> -registerEvent <event> -info <json>`.
-2. **The engine connects.** It opens a WebSocket to `127.0.0.1:<port>`, registers itself, and asks for its global settings, which hold the verbose log switch.
+2. **The engine connects.** It opens a WebSocket to `127.0.0.1:<port>`, registers itself, and asks for its global settings: the interface language and the verbose log switch.
 3. **Idle.** The engine waits for messages. Measured on Linux: about 1.3 MB of memory and no measurable CPU time.
 4. **A key or dial appears** (`willAppear`), for example after a profile or page change. The engine receives that action's settings and shows its image.
 5. **A key is pressed** (`keyDown`, `dialDown`, `touchTap`, `dialRotate`). A playback thread replays the macro, then ends. See [Playback](#playback).
@@ -117,7 +117,7 @@ All messages are JSON over the local WebSocket, following the Stream Deck SDK.
 | `keyDown`, `dialDown`, `touchTap` | Plays the press macro, or stops the current playback or recording |
 | `dialRotate` | Queues the turn macro once per notch |
 | `willDisappear` | Stops that key's playback |
-| `didReceiveGlobalSettings` | Turns the verbose log on or off |
+| `didReceiveGlobalSettings` | Stores the plugin-wide settings (language, verbose log) |
 | `sendToPlugin` | A command from the editor (see below) |
 
 **From the engine to OpenDeck:** `setState`, `setImage`, `setFeedback`, `setSettings`, `showAlert`, `getGlobalSettings`, `setGlobalSettings`, `sendToPropertyInspector`.
@@ -128,10 +128,10 @@ All messages are JSON over the local WebSocket, following the Stream Deck SDK.
 |---|---|
 | `record`, `stopRecord` | Starts or stops a recording |
 | `play`, `stopPlay` | Starts or stops a test playback |
-| `status` | Replies with the recording and playing state, the controller type and the OS |
+| `status` | Replies with the recording and playing state, the controller type, the OS and the interface language |
 | `about`, `diagnostics` | Replies with the About tab information or the platform checks |
 | `readLog`, `clearLog`, `openLogFolder` | Reads or clears the log, or opens its folder in the file manager |
-| `setDebug` | Turns the verbose log on or off and saves it in the global settings |
+| `setDebug`, `setLanguage` | Changes the verbose log switch or the interface language, and saves the global settings |
 
 **Replies to the editor** (`sendToPropertyInspector`, field `type`): `status`, `playing`, `recording`, `recordEvent`, `recorded`, `about`, `diagnostics`, `log`, `error`.
 
@@ -161,9 +161,9 @@ Errors are sent as **codes**, for example `uinput_failed` or `permission_accessi
 
 `code` is a Linux evdev code, which identifies a **physical** key, so a macro replays the same keys whatever the keyboard layout. The Windows and macOS backends translate it with their own tables. `delay` is in milliseconds since the previous event. An event can also carry `"disabled": true`.
 
-**Global settings**: `debug`, the verbose log switch.
+**Global settings**, shared by every key: `language` (`auto` or a language code) and `debug` (the verbose log switch). The engine keeps them all and always saves them together, because OpenDeck replaces the whole object on each save.
 
-**Editor preferences**, saved in the browser storage of OpenDeck: the interface language, and the last open tab (for the current session only).
+**Editor preferences**, saved in the browser storage of OpenDeck: the last open tab (for the current session only), and a copy of the interface language so that the editor opens in it before the engine answers.
 
 **Log**: `plugin.log` in the plugin folder, with times in UTC. Past 1 MB it is renamed `plugin.log.old` and a new one starts.
 

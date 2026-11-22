@@ -165,6 +165,7 @@ Every push and pull request runs the tests and builds all platforms on GitHub Ac
 | `install.sh`, `install.ps1` | Build from source and install (Linux, Windows) |
 | `.github/workflows/release.yml` | Tests, builds and packages all platforms |
 | `docs/ARCHITECTURE.md` | How the plugin works inside OpenDeck |
+| `AGENTS.md`, `CLAUDE.md` | Instructions for AI coding agents (CLAUDE.md imports AGENTS.md) |
 | `rustfmt.toml` | Formatting settings |
 | `data/` | Logo and screenshot used by this README |
 

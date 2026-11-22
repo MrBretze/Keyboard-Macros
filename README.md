@@ -8,19 +8,29 @@ An OpenDeck (and Stream Deck) plugin that records keyboard and mouse sequences w
 
 ![The plugin in OpenDeck: a macro on a key and on a Stream Deck+ dial, with the macro editor below](data/screenshot.png)
 
+## Requirements
+
+OpenDeck does **not** ship Python. On Linux, this plugin needs:
+
+| Dependency | Why | How to get it |
+|---|---|---|
+| **Python 3.8 or newer** (standard library only, no `pip` package) | The plugin is written in Python | Already included in the OpenDeck **Flatpak** runtime. With a native OpenDeck package (`.deb`, `.rpm`, AUR...), install it from your distribution: `sudo apt install python3` (Debian / Ubuntu), `sudo dnf install python3` (Fedora), `sudo pacman -S python` (Arch). |
+| Read/write access to `/dev/uinput` | Simulating keyboard and mouse input | Add your user to the `input` group (`sudo usermod -aG input $USER`), then log out and back in. Some distributions grant it to the logged-in user already. |
+| Read access to `/dev/input/event*` | Recording keyboard and mouse input | Same `input` group as above. |
+
+If Python is missing, the plugin does not start and writes the reason to `plugin.log` in its folder and to OpenDeck's log.
+
 ## Installation
 
 ### Linux
+
+Install it from OpenDeck's plugin list, or download the `.zip` from the [latest release](https://github.com/MrBretze/Keyboard-Macros/releases/latest) and use "Install from file" in OpenDeck. From a clone of this repository, you can also run:
 
 ```bash
 ./install.sh   # copies the plugin into OpenDeck's plugin folder (Flatpak or native)
 ```
 
 Then restart OpenDeck.
-
-Requirements:
-- `python3`, already provided by the OpenDeck Flatpak runtime.
-- Access to `/dev/uinput` and `/dev/input/event*`. Usually, being in the `input` group is enough.
 
 ### Windows
 
@@ -91,6 +101,7 @@ Notches turned while a turn macro is playing are queued, up to 50. Turning the o
 
 | File | Purpose |
 |---|---|
+| `run.sh` | Linux launcher: checks the Python 3.8+ dependency, then starts `plugin.py` |
 | `plugin.py` | Entry point: WebSocket connection, playback, recording, key images |
 | `input_common.py` | Shared code (recorder logic, errors, logging) |
 | `input_linux.py` / `input_windows.py` | Keyboard simulation and capture for each OS |

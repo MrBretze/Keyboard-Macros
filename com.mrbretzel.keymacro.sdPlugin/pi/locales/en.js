@@ -127,7 +127,7 @@ I18N.en = {
 	"btn.clamp": "Cap at",
 
 	"btn.import": "Import",
-	"hint.json": "Formats: {\"code\":30,\"down\":true,\"delay\":0} (key or mouse button), {\"type\":\"move\",\"dx\":10,\"dy\":0,\"delay\":8}, {\"type\":\"wheel\",\"dx\":0,\"dy\":1,\"delay\":50}",
+	"hint.json": "Formats: {\"code\":30,\"down\":true,\"delay\":0} (key or mouse button), {\"type\":\"move\",\"dx\":10,\"dy\":0,\"delay\":8,\"n\":12} (n: recorded steps, optional), {\"type\":\"wheel\",\"dx\":0,\"dy\":1,\"delay\":50}",
 
 	"label.base": "Icon",
 	"base.default": "Default",

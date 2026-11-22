@@ -40,7 +40,7 @@ cargo audit                                              # known vulnerabilities
 
 - **Macro format.** Every event is stored with Linux evdev codes, which name physical keys, on every OS:
   - `{code, down, delay}` for a key or mouse button;
-  - `{type:"move", dx, dy, delay}`;
+  - `{type:"move", dx, dy, delay, n?}`: `n` is the number of device reports merged into the row. Playback replays it as `n` steps (`split_steps`) so that the pointer acceleration matches the recording;
   - `{type:"wheel", dx, dy, delay}`.
 
   `delay` is in ms since the previous event. The editor table (`pi/keys.js`) and the Windows and macOS backends all translate from these codes. In `src/input/windows.rs` and `macos.rs`, the key tables are `#[rustfmt::skip]` and covered by round-trip unit tests. Keep the three in agreement when adding keys.

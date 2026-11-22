@@ -2,7 +2,9 @@
 //!
 //! Macro event formats (stored in the action settings, identical on every platform):
 //!   {"code": 30, "down": true, "delay": 0}              key or mouse button (Linux evdev code)
-//!   {"type": "move", "dx": 12, "dy": -3, "delay": 8}    relative mouse movement
+//!   {"type": "move", "dx": 12, "dy": -3, "delay": 8, "n": 12}
+//!                                                       relative mouse movement; optional
+//!                                                       "n" = device reports merged into it
 //!   {"type": "wheel", "dx": 0, "dy": 1, "delay": 120}   wheel notches (dy > 0 = up, dx > 0 = right)
 //! "delay" is in milliseconds since the previous event.
 
@@ -61,9 +63,21 @@ impl std::fmt::Display for InputError {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MacroEvent {
-    Key { code: u16, down: bool },
-    Move { dx: i32, dy: i32 },
-    Wheel { dx: i32, dy: i32 },
+    Key {
+        code: u16,
+        down: bool,
+    },
+    /// `reports`: number of device reports merged into this move while recording (1 for a
+    /// move added by hand). Playback splits the move back into that many steps.
+    Move {
+        dx: i32,
+        dy: i32,
+        reports: u32,
+    },
+    Wheel {
+        dx: i32,
+        dy: i32,
+    },
 }
 
 /// One playable step: an event and the delay before it.
@@ -81,7 +95,12 @@ pub fn parse_steps(events: &Value) -> Vec<Step> {
         .filter_map(|e| {
             let int = |key: &str| e.get(key).and_then(Value::as_f64).unwrap_or(0.0).round() as i32;
             let event = match e.get("type").and_then(Value::as_str).unwrap_or("key") {
-                "move" => MacroEvent::Move { dx: int("dx"), dy: int("dy") },
+                "move" => MacroEvent::Move {
+                    dx: int("dx"),
+                    dy: int("dy"),
+                    // Bounded: a mouse reports at most ~8 kHz, so a 12 ms merge holds < 100.
+                    reports: e.get("n").and_then(Value::as_u64).map_or(1, |n| n.clamp(1, 1000) as u32),
+                },
                 "wheel" => MacroEvent::Wheel { dx: int("dx"), dy: int("dy") },
                 _ => MacroEvent::Key {
                     code: u16::try_from(e.get("code")?.as_u64()?).ok()?,

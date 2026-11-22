@@ -13,6 +13,12 @@ use std::sync::atomic::{AtomicU8, Ordering};
 /// second, which would make huge, unreadable macros.
 const MOVE_MERGE_WINDOW: f64 = 0.012; // seconds
 
+/// Trip to the editor's Stop button: the last continuous movement before the click. It ends
+/// (going backwards) at the first pause of this length...
+const STOP_TRIP_PAUSE_MS: u64 = 250;
+/// ...and never covers more than this, so a long gesture is not erased.
+const STOP_TRIP_MAX_MS: u64 = 1500;
+
 /// A recording left running cannot grow without limit: extra events are dropped.
 const MAX_EVENTS: usize = 100_000;
 
@@ -51,8 +57,8 @@ pub struct RecorderCore {
     events: Vec<Value>,
     held: Vec<u16>,
     last_t: Option<f64>,
-    /// Pending merged movement: (dx, dy, first_t, last_t).
-    pending_move: Option<(i32, i32, f64, f64)>,
+    /// Pending merged movement: (dx, dy, first_t, last_t, number of reports).
+    pending_move: Option<(i32, i32, f64, f64, u32)>,
     limit_reached: bool,
 }
 
@@ -92,11 +98,18 @@ impl RecorderCore {
         self.events.push(ev);
     }
 
+    /// Emits the merged movement. `n` is the number of device reports it merges: playback
+    /// splits it back into that many steps, so the desktop sees the original speed and
+    /// applies the same pointer acceleration as during the recording.
     fn flush_move(&mut self) {
-        if let Some((dx, dy, _, last_t)) = self.pending_move.take()
+        if let Some((dx, dy, _, last_t, reports)) = self.pending_move.take()
             && (dx != 0 || dy != 0)
         {
-            self.emit(json!({"type": "move", "dx": dx, "dy": dy}), last_t);
+            let mut ev = json!({"type": "move", "dx": dx, "dy": dy});
+            if reports > 1 {
+                ev["n"] = json!(reports);
+            }
+            self.emit(ev, last_t);
         }
     }
 
@@ -125,7 +138,12 @@ impl RecorderCore {
         if !self.options.mouse_move || (dx == 0 && dy == 0) {
             return;
         }
-        let pending = self.pending_move.get_or_insert((0, 0, t, t));
+        let pending = self.pending_move.get_or_insert((0, 0, t, t, 1));
+        // One device report can arrive as several calls with the same timestamp (X and Y
+        // axes on Linux): only a new timestamp counts as a new report.
+        if t > pending.3 {
+            pending.4 = pending.4.saturating_add(1);
+        }
         pending.0 = pending.0.saturating_add(dx);
         pending.1 = pending.1.saturating_add(dy);
         pending.3 = t;
@@ -142,29 +160,56 @@ impl RecorderCore {
         self.emit(json!({"type": "wheel", "dx": dx, "dy": dy}), t);
     }
 
-    /// The browser fires "click" on release, so a stop from the editor's button leaves:
-    /// moves, left down, (moves), left up, (moves). That tail is not part of the macro.
+    /// A stop from the editor's button leaves, at the end of the recording: the trip to the
+    /// button, left down, (moves), left up, (moves). The browser fires "click" on release.
+    /// That tail is not part of the macro. The trip is the last continuous movement before
+    /// the click; a pause ends it, so a gesture made before is kept.
     fn trim_stop_click(&mut self) {
         fn pop_moves(events: &mut Vec<Value>) {
             while events.last().is_some_and(|e| is_type(e, "move")) {
                 events.pop();
             }
         }
-        fn pop_left(events: &mut Vec<Value>, down: bool) {
+        fn pop_left(events: &mut Vec<Value>, down: bool) -> bool {
             let is_left = events.last().is_some_and(|e| {
                 is_type(e, "key")
-                    && e.get("code").and_then(Value::as_u64) == Some(BTN_LEFT as u64)
+                    && e.get("code").and_then(Value::as_u64) == Some(u64::from(BTN_LEFT))
                     && e.get("down").and_then(Value::as_bool) == Some(down)
             });
             if is_left {
                 events.pop();
             }
+            is_left
         }
-        pop_moves(&mut self.events);
-        pop_left(&mut self.events, false);
-        pop_moves(&mut self.events);
-        pop_left(&mut self.events, true);
-        pop_moves(&mut self.events);
+        let delay = |e: &Value| e.get("delay").and_then(Value::as_u64).unwrap_or(0);
+
+        pop_moves(&mut self.events); // after the release
+        let _ = pop_left(&mut self.events, false);
+        pop_moves(&mut self.events); // between press and release
+        let Some(click) = self.events.last().filter(|e| {
+            is_type(e, "key")
+                && e.get("code").and_then(Value::as_u64) == Some(u64::from(BTN_LEFT))
+                && e.get("down").and_then(Value::as_bool) == Some(true)
+        }) else {
+            return;
+        };
+        // Walk back over the trip: each move's following gap must be short (continuous
+        // motion). The gap before the click itself is the user aiming at the button, so it
+        // may be longer.
+        let mut gap_after = delay(click);
+        let _ = pop_left(&mut self.events, true);
+        let mut trip_ms: u64 = 0; // duration of the trip itself, aiming time excluded
+        let mut first = true;
+        while let Some(last) = self.events.last() {
+            let limit = if first { STOP_TRIP_PAUSE_MS * 8 } else { STOP_TRIP_PAUSE_MS };
+            if !is_type(last, "move") || gap_after > limit || trip_ms > STOP_TRIP_MAX_MS {
+                break;
+            }
+            gap_after = delay(last);
+            trip_ms = trip_ms.saturating_add(gap_after);
+            first = false;
+            self.events.pop();
+        }
     }
 
     /// Ends the recording and hands the events to the plugin.
@@ -264,5 +309,78 @@ mod tests {
         let tail: Vec<_> =
             evs.iter().rev().take(2).map(|e| (e["code"].as_u64(), e["down"].as_bool())).collect();
         assert_eq!(tail, vec![(Some(57), Some(false)), (Some(57), Some(true))]);
+    }
+
+    fn record(feed: impl FnOnce(&mut RecorderCore), editor_stop: bool) -> Vec<Value> {
+        let out = Arc::new(Mutex::new(Vec::new()));
+        let out2 = out.clone();
+        let mut r = RecorderCore::new(
+            RecordOptions { mouse: true, mouse_move: true },
+            Box::new(|_| {}),
+            Box::new(move |evs| *out2.lock().unwrap() = evs),
+        );
+        feed(&mut r);
+        r.finish(editor_stop);
+        out.lock().unwrap().clone()
+    }
+
+    fn total_move(events: &[Value]) -> (i64, i64) {
+        events
+            .iter()
+            .filter(|e| is_type(e, "move"))
+            .fold((0, 0), |a, e| (a.0 + e["dx"].as_i64().unwrap(), a.1 + e["dy"].as_i64().unwrap()))
+    }
+
+    #[test]
+    fn mouse_only_gesture_survives_an_editor_stop() {
+        let evs = record(
+            |r| {
+                for i in 0..200 {
+                    r.feed_move(3, 1, f64::from(i) * 0.005); // 1 s gesture
+                }
+                for i in 0..60 {
+                    r.feed_move(-5, 2, 2.0 + f64::from(i) * 0.005); // pause, then trip to Stop
+                }
+                r.feed_key(BTN_LEFT, true, 2.6);
+                r.feed_key(BTN_LEFT, false, 2.7);
+            },
+            true,
+        );
+        assert_eq!(total_move(&evs), (600, 200), "the gesture is kept, the trip is dropped");
+        assert!(!evs.iter().any(|e| e["code"] == BTN_LEFT), "the Stop click is dropped");
+    }
+
+    #[test]
+    fn a_long_continuous_move_is_not_erased_by_an_editor_stop() {
+        let evs = record(
+            |r| {
+                for i in 0..800 {
+                    r.feed_move(1, 0, f64::from(i) * 0.005); // 4 s, no pause before the click
+                }
+                r.feed_key(BTN_LEFT, true, 4.1);
+                r.feed_key(BTN_LEFT, false, 4.2);
+            },
+            true,
+        );
+        let (dx, _) = total_move(&evs);
+        assert!(dx > 400, "at most ~1.5 s of movement may be trimmed, kept {dx}");
+    }
+
+    #[test]
+    fn report_count_ignores_split_axes() {
+        let evs = record(
+            |r| {
+                for i in 0..12 {
+                    let t = f64::from(i) * 0.001; // 1 kHz mouse, X and Y in the same report
+                    r.feed_move(2, 0, t);
+                    r.feed_move(0, 1, t);
+                }
+            },
+            false,
+        );
+        let moves: Vec<_> = evs.iter().filter(|e| is_type(e, "move")).collect();
+        let reports: u64 = moves.iter().map(|e| e.get("n").and_then(Value::as_u64).unwrap_or(1)).sum();
+        assert_eq!(reports, 12, "{moves:?}");
+        assert_eq!(total_move(&evs), (24, 12));
     }
 }

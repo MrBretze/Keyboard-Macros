@@ -127,7 +127,7 @@ I18N.fr = {
 	"btn.clamp": "Plafonner à",
 
 	"btn.import": "Importer",
-	"hint.json": "Formats : {\"code\":30,\"down\":true,\"delay\":0} (touche ou bouton de souris), {\"type\":\"move\",\"dx\":10,\"dy\":0,\"delay\":8}, {\"type\":\"wheel\",\"dx\":0,\"dy\":1,\"delay\":50}",
+	"hint.json": "Formats : {\"code\":30,\"down\":true,\"delay\":0} (touche ou bouton de souris), {\"type\":\"move\",\"dx\":10,\"dy\":0,\"delay\":8,\"n\":12} (n : pas enregistrés, facultatif), {\"type\":\"wheel\",\"dx\":0,\"dy\":1,\"delay\":50}",
 
 	"label.base": "Icône",
 	"base.default": "Par défaut",

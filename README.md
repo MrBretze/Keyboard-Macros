@@ -58,7 +58,7 @@ The settings panel has a status bar with a "▶ Test" button, and six tabs:
 
 - **Macro** (default tab): record and edit the macro.
   - Click "● Record", type your sequence, then click "■ Stop" or press the deck key. "Append to the end" adds the recording after the existing macro instead of replacing it.
-  - "Record the mouse" (off by default) also records mouse buttons and the wheel, and, with "including movements", mouse movements. When you stop with the editor's "■ Stop" button, the click on that button and the movement to reach it are left out.
+  - "Record the mouse" (off by default) also records mouse buttons and the wheel, and, with "including movements", mouse movements. When you stop with the editor's "■ Stop" button, the click on that button and the last continuous movement before it (the trip to the button) are left out; a gesture followed by a short pause is kept. To keep a gesture exactly as made, stop with the deck key instead.
   - Each row is one event (press or release) with its delay in ms since the previous event. You can change the key, switch press/release, disable, move, duplicate or delete rows. Ctrl+Z undoes. Key names follow your system: Super on Linux, Win on Windows, ⌘ Command on macOS.
   - Mouse buttons appear in the table like keys ("Left click"...). Movements and wheel notches have their own rows with editable x / y values. "+ Move" and "+ Wheel" add them by hand.
   - Delay tools: multiply, set, round or cap all delays, or remove all mouse movements (their delays move to the next event, so the timing is unchanged).
@@ -113,7 +113,7 @@ For the full picture (the engine process and its threads, playback and recording
 
 - The engine is a **single background process**, started by OpenDeck and running as long as OpenDeck is open, for all the keys that use the plugin. It uses about 1 MB of memory and no CPU while idle. The editor is a web page shown by OpenDeck only while an action is selected.
 - Macros store **physical key** codes (Linux evdev codes). A macro replays the same physical keys whatever the keyboard layout, on every operating system. The AZERTY/QWERTY selector only changes the key names shown in the table.
-- **Mouse movements** are relative, merged over about 12 ms so the macro stays readable. The fixed delay option does not apply to them, so gestures keep their speed.
+- **Mouse movements** are relative. To keep the macro readable, the small movements a mouse reports (up to 1,000 per second) are merged over about 12 ms into one row, which remembers how many reports it holds (`n`). Playback splits each row back into those small steps at the original pace, so the desktop applies the same pointer acceleration as during the recording and the cursor follows the same path. The fixed delay option does not apply to movements, so gestures keep their speed.
 - **Linux**:
   - Keys are sent through a virtual `uinput` keyboard, and mouse input through a separate virtual mouse. This works on Wayland and X11.
   - Recording reads keyboards (and mice, when enabled) through evdev, opened read-only and without grabbing them.

@@ -85,7 +85,7 @@ sequenceDiagram
    - it merges mouse movements over about 12 ms;
    - it computes each delay;
    - it streams each event to the editor for the live display.
-4. "■ Stop" in the editor, or a press on the deck key, ends the recording. A stop from the editor removes the click on the Stop button and the movement to reach it. Keys still held get a release event. A recording keeps at most 100,000 events.
+4. "■ Stop" in the editor, or a press on the deck key, ends the recording. A stop from the editor removes the click on the Stop button and the trip to reach it: the last continuous movement before the click, which ends at the first pause of 250 ms and never covers more than 1.5 s, so a gesture made before is kept. Keys still held get a release event. A recording keeps at most 100,000 events.
 5. The engine stores the events in the action settings (`setSettings`) and sends them to the editor.
 
 Nothing is read from the keyboards outside of a recording.
@@ -163,11 +163,13 @@ Errors are sent as **codes**, for example `uinput_failed` or `permission_accessi
 
 ```json
 {"code": 30, "down": true, "delay": 0}
-{"type": "move", "dx": 12, "dy": -3, "delay": 8}
+{"type": "move", "dx": 12, "dy": -3, "delay": 8, "n": 12}
 {"type": "wheel", "dx": 0, "dy": 1, "delay": 120}
 ```
 
 `code` is a Linux evdev code, which identifies a **physical** key, so a macro replays the same keys whatever the keyboard layout. The Windows and macOS backends translate it with their own tables. `delay` is in milliseconds since the previous event. An event can also carry `"disabled": true`.
+
+A recorded movement merges the mouse reports of about 12 ms; `n` is how many. Playback splits it back into `n` steps spread over the 12 ms before the event's time. The desktop's pointer acceleration depends on the size and pace of each step, so this makes the cursor follow the recorded path. Moves added by hand have no `n` and are sent as one step.
 
 **Global settings**, shared by every key: `language` (`auto` or a language code) and `debug` (the verbose log switch). The engine keeps them all and always saves them together, because OpenDeck replaces the whole object on each save.
 

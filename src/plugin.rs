@@ -108,6 +108,20 @@ fn bounded_delay(ms: f64, speed: f64) -> Duration {
     Duration::try_from_secs_f64(ms.max(0.0) / 1000.0 / speed).map_or(MAX_DELAY, |d| d.min(MAX_DELAY))
 }
 
+/// Time span covered by a recorded mouse move (the recorder's merge window): playback
+/// spreads the move's steps over it.
+const MOVE_SPAN: Duration = Duration::from_millis(12);
+
+/// Splits a total into `parts` integer steps whose sum is exactly `total`.
+fn split_steps(total: i32, parts: u32, index: u32) -> i32 {
+    let total = i64::from(total);
+    let parts = i64::from(parts.max(1));
+    let index = i64::from(index);
+    // Cumulative rounding: step k = round(total*(k+1)/parts) - round(total*k/parts).
+    let at = |k: i64| (total * k).div_euclid(parts);
+    i32::try_from(at(index + 1) - at(index)).unwrap_or(0)
+}
+
 /// How much of the log the About tab shows.
 const LOG_TAIL_BYTES: u64 = 48 * 1024;
 
@@ -323,18 +337,46 @@ impl Plugin {
             // theirs, otherwise a recorded gesture would become very slow.
             let is_move = matches!(step.event, MacroEvent::Move { .. });
             let delay = if use_fixed && i > 0 && !is_move { fixed } else { step.delay_ms };
-            deadline += bounded_delay(delay, speed);
-            let wait = deadline.saturating_duration_since(Instant::now());
-            if !wait.is_zero() && stop.wait(wait) {
-                return Ok(false);
-            }
+            let gap = bounded_delay(delay, speed);
+            deadline += gap;
             match step.event {
-                MacroEvent::Key { code, down } => self.input.key(code, down)?,
-                MacroEvent::Move { dx, dy } => self.input.move_by(dx, dy)?,
-                MacroEvent::Wheel { dx, dy } => self.input.wheel(dx, dy)?,
+                MacroEvent::Move { dx, dy, reports } if reports > 1 => {
+                    // A recorded move merges `reports` small device steps made during the
+                    // MOVE_SPAN before its time. Replay them the same way, ending at the
+                    // event's time: the desktop then sees the original speed and applies
+                    // the same pointer acceleration, so the cursor lands where it did.
+                    let span = MOVE_SPAN.mul_f64(1.0 / speed).min(gap);
+                    let start = deadline.checked_sub(span).unwrap_or(deadline);
+                    for k in 0..reports {
+                        let at = start + span.mul_f64(f64::from(k + 1) / f64::from(reports));
+                        if !self.wait_until(at, stop) {
+                            return Ok(false);
+                        }
+                        let (sx, sy) = (split_steps(dx, reports, k), split_steps(dy, reports, k));
+                        if sx != 0 || sy != 0 {
+                            self.input.move_by(sx, sy)?;
+                        }
+                    }
+                }
+                event => {
+                    if !self.wait_until(deadline, stop) {
+                        return Ok(false);
+                    }
+                    match event {
+                        MacroEvent::Key { code, down } => self.input.key(code, down)?,
+                        MacroEvent::Move { dx, dy, .. } => self.input.move_by(dx, dy)?,
+                        MacroEvent::Wheel { dx, dy } => self.input.wheel(dx, dy)?,
+                    }
+                }
             }
         }
         Ok(!stop.is_set())
+    }
+
+    /// Waits until `at`. Returns false if a stop was requested meanwhile.
+    fn wait_until(&self, at: Instant, stop: &StopFlag) -> bool {
+        let wait = at.saturating_duration_since(Instant::now());
+        wait.is_zero() || !stop.wait(wait)
     }
 
     /// Registers a player (the caller holds the state lock) and starts its thread.
@@ -762,6 +804,16 @@ mod tests {
     }
 
     #[test]
+    fn split_moves_add_up_exactly() {
+        for (total, parts) in [(25, 12), (-7, 3), (1, 12), (0, 5), (100, 1), (-1, 7), (i32::MAX, 2)] {
+            let steps: Vec<i32> = (0..parts).map(|k| split_steps(total, parts, k)).collect();
+            assert_eq!(steps.iter().map(|&v| i64::from(v)).sum::<i64>(), i64::from(total), "{total}/{parts}");
+            let (min, max) = (steps.iter().min().unwrap(), steps.iter().max().unwrap());
+            assert!(max - min <= 1, "steps should be even: {steps:?}");
+        }
+    }
+
+    #[test]
     fn only_known_links_can_be_opened() {
         assert_eq!(link_url("repo").as_deref(), Some(REPOSITORY_URL));
         assert!(link_url("issues").unwrap().starts_with(REPOSITORY_URL));
@@ -780,6 +832,6 @@ mod tests {
             {"type": "move", "dx": 1e12, "dy": -3, "delay": 8},
         ]));
         assert_eq!(steps.len(), 2);
-        assert!(matches!(steps[1].event, MacroEvent::Move { dx: i32::MAX, dy: -3 }));
+        assert!(matches!(steps[1].event, MacroEvent::Move { dx: i32::MAX, dy: -3, reports: 1 }));
     }
 }

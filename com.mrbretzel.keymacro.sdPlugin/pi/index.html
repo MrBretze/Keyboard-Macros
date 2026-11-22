@@ -834,7 +834,11 @@ $("import").onclick = () => {
 		pushHistory();
 		setEvs(data.map((e) => {
 			const base = isMouse(e)
-				? { type: e.type, dx: Math.round(+e.dx || 0), dy: Math.round(+e.dy || 0) }
+				? {
+					type: e.type, dx: Math.round(+e.dx || 0), dy: Math.round(+e.dy || 0),
+					// Recorded moves: number of device reports merged (replayed as that many steps).
+					...(e.type === "move" && Number.isInteger(e.n) && e.n > 1 ? { n: Math.min(e.n, 1000) } : {}),
+				}
 				: { code: e.code, down: e.down };
 			return { ...base, delay: Math.max(0, +e.delay || 0), ...(e.disabled ? { disabled: true } : {}) };
 		}));

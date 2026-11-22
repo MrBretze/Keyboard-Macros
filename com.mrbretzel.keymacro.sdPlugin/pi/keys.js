@@ -34,12 +34,33 @@ const AZERTY_LABELS = {
 	41: "²", 43: "* µ", 44: "W", 50: ", ?", 51: "; .", 52: ": /", 53: "! §", 86: "< >",
 };
 
-function keyLabel(code, layout) {
+// Operating system the macro runs on: "linux", "windows" or "mac". Some keys have a
+// platform-specific name (Super / Win / ⌘ Command...), looked up as "key.<NAME>.<platform>"
+// in the translations before the generic "key.<NAME>".
+let currentPlatform = "linux";
+
+function normalizePlatform(value) {
+	const v = String(value || "").toLowerCase();
+	if (v.startsWith("mac") || v === "darwin" || v === "osx") return "mac";
+	if (v.startsWith("win")) return "windows";
+	return "linux";
+}
+
+function setPlatform(value) {
+	currentPlatform = normalizePlatform(value);
+	document.documentElement.dataset.platform = currentPlatform;
+}
+
+function keyLabel(code, layout, platform = currentPlatform) {
 	const name = KEYS[code];
 	if (!name) return "#" + code;
 	if (layout === "azerty" && AZERTY_LABELS[code]) return AZERTY_LABELS[code];
-	const nice = typeof t === "function" ? t("key." + name) : "key." + name;
-	return nice === "key." + name ? name : nice;
+	if (typeof t !== "function") return name;
+	for (const key of ["key." + name + "." + platform, "key." + name]) {
+		const label = t(key);
+		if (label !== key) return label;
+	}
+	return name;
 }
 
 function keyName(code) {
@@ -55,9 +76,12 @@ function parseKey(text, layout) {
 	if (/^\d+$/.test(input)) return parseInt(input, 10);
 	const up = input.toUpperCase().replace(/^KEY_/, "");
 	const codes = Object.keys(KEYS).map(Number);
-	const byLabel = (c) => keyLabel(c, layout).toUpperCase();
+	const wanted = input.toUpperCase();
+	// Current platform's names first, then the other platforms' ("Alt" still works on a Mac).
+	const platforms = [currentPlatform, ...["linux", "windows", "mac"].filter((p) => p !== currentPlatform)];
+	const byLabel = (platform) => codes.find((c) => keyLabel(c, layout, platform).toUpperCase() === wanted);
 	return (
-		codes.find((c) => byLabel(c) === input.toUpperCase()) ??
+		platforms.reduce((found, platform) => found ?? byLabel(platform), undefined) ??
 		codes.find((c) => layout === "azerty" && AZERTY_LABELS[c] && AZERTY_LABELS[c].split(" ").some((p) => p.toUpperCase() === input.toUpperCase())) ??
 		codes.find((c) => KEYS[c] === up) ??
 		null

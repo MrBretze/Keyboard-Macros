@@ -352,6 +352,7 @@ function connectElgatoStreamDeckSocket(inPort, inUUID, inRegisterEvent, inInfo, 
 	settings = Object.assign({}, DEFAULTS, info.payload.settings || {});
 	if (info.payload.controller) setController(info.payload.controller);
 	setLanguage(detectLanguage(hostInfo));
+	setPlatform(hostInfo && hostInfo.application && hostInfo.application.platform);
 	ws = new WebSocket("ws://127.0.0.1:" + inPort);
 	ws.onopen = () => {
 		ws.send(JSON.stringify({ event: inRegisterEvent, uuid: inUUID }));
@@ -397,6 +398,12 @@ function onMessage(msg) {
 	switch (p.type) {
 		case "status":
 			if (p.controller) setController(p.controller);
+			// The plugin reports the OS it really runs on: it decides the key names.
+			if (p.platform && normalizePlatform(p.platform) !== currentPlatform) {
+				setPlatform(p.platform);
+				fillDatalist();
+				renderRows();
+			}
 			state.recording = p.recording; state.playing = p.playing;
 			if (p.recording) liveRec = [];
 			setStatus(null); break;

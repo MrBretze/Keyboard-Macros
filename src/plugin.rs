@@ -1,11 +1,15 @@
 //! Plugin logic: reacts to OpenDeck events, plays and records macros, updates keys.
 //!
+//! This module is synchronous: playback and recording run on plain threads. It talks to
+//! OpenDeck only through `Outgoing` messages, which `host.rs` delivers in order with the
+//! `openaction` crate; `host.rs` also calls the `on_*` entry points below for each event.
+//!
 //! User-facing text is not produced here: errors are sent to the property inspector as
 //! codes, and the property inspector translates them.
 
 use crate::common::{
     DEBUG, InputError, MacroEvent, Step, clear_log, log_path, open_folder, parse_steps, plugin_dir,
-    read_log_tail, shorten_for_log,
+    read_log_tail,
 };
 use crate::input::{RecorderHandle, VirtualInput, diagnostics, start_recording};
 use crate::recorder::RecordOptions;
@@ -14,11 +18,50 @@ use base64::Engine;
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::Ordering;
-use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
+use tokio::sync::mpsc::UnboundedSender;
 
-const ACTION_UUID: &str = "com.mrbretzel.keymacro.macro";
+pub const ACTION_UUID: &str = "com.mrbretzel.keymacro.macro";
+
+/// A message for OpenDeck. Produced by any thread, delivered in order by `host::deliver`.
+#[derive(Debug)]
+pub enum Outgoing {
+    SetState {
+        context: String,
+        state: u8,
+    },
+    /// `image: None` resets the state to the manifest image.
+    SetImage {
+        context: String,
+        image: Option<String>,
+        state: u8,
+    },
+    /// Dial touch-strip layout values.
+    SetFeedback {
+        context: String,
+        payload: Value,
+    },
+    ShowAlert {
+        context: String,
+    },
+    SetSettings {
+        context: String,
+        settings: Value,
+    },
+    /// To the property inspector of one key.
+    ToEditor {
+        context: String,
+        payload: Value,
+    },
+    /// To the property inspector of every visible key of this plugin.
+    ToAllEditors {
+        payload: Value,
+    },
+    SetGlobalSettings {
+        settings: Value,
+    },
+}
 
 const STATE_IDLE: u8 = 0;
 const STATE_PLAYING: u8 = 1;
@@ -104,9 +147,7 @@ struct State {
 }
 
 pub struct Plugin {
-    out: Sender<String>,
-    /// UUID given by OpenDeck at launch; also the context of global settings.
-    plugin_uuid: String,
+    out: UnboundedSender<Outgoing>,
     input: VirtualInput,
     state: Mutex<State>,
     default_icons: Vec<Option<String>>,
@@ -126,10 +167,9 @@ fn has_events(s: Option<&Value>, slot: &str) -> bool {
 }
 
 impl Plugin {
-    pub fn new(out: Sender<String>, plugin_uuid: String) -> Arc<Self> {
+    pub fn new(out: UnboundedSender<Outgoing>) -> Arc<Self> {
         Arc::new(Self {
             out,
-            plugin_uuid,
             input: VirtualInput::default(),
             state: Mutex::new(State::default()),
             default_icons: STATE_ICONS.iter().map(|p| load_data_url(p)).collect(),
@@ -140,23 +180,15 @@ impl Plugin {
         self.state.lock().unwrap()
     }
 
-    // ------------------------------------------------------------ SDK helpers
+    // ------------------------------------------------------------ messages to OpenDeck
 
-    fn send(&self, mut message: Value) {
-        if let Value::Object(map) = &mut message {
-            map.retain(|_, v| !v.is_null());
-        }
-        let text = message.to_string();
-        debug_log!("-> {}", shorten_for_log(&text));
-        let _ = self.out.send(text);
-    }
-
-    fn send_event(&self, event: &str, context: &str, payload: Value) {
-        self.send(json!({"event": event, "context": context, "payload": payload}));
+    fn send(&self, message: Outgoing) {
+        // Fails only once the connection is gone, when there is nobody left to tell.
+        let _ = self.out.send(message);
     }
 
     fn to_pi(&self, context: &str, payload: Value) {
-        self.send(json!({"event": "sendToPropertyInspector", "context": context, "action": ACTION_UUID, "payload": payload}));
+        self.send(Outgoing::ToEditor { context: context.to_owned(), payload });
     }
 
     fn error(&self, context: &str, code: &str, detail: &str) {
@@ -164,7 +196,7 @@ impl Plugin {
     }
 
     fn alert(&self, context: &str) {
-        self.send(json!({"event": "showAlert", "context": context}));
+        self.send(Outgoing::ShowAlert { context: context.to_owned() });
     }
 
     fn set_state(&self, context: &str, state: u8) {
@@ -175,7 +207,7 @@ impl Plugin {
     /// Same as `set_state`, for callers that already hold the state lock.
     fn set_state_locked(&self, st: &mut State, context: &str, state: u8) {
         st.states.insert(context.to_owned(), state);
-        self.send_event("setState", context, json!({"state": state}));
+        self.send(Outgoing::SetState { context: context.to_owned(), state });
         self.apply_image(st, context);
     }
 
@@ -193,7 +225,10 @@ impl Plugin {
         if st.controllers.get(context).map(String::as_str) == Some("Encoder") {
             // The dial's touch-strip segment uses a layout: its icon is set through feedback.
             if let Some(icon) = image.clone().or_else(|| self.default_icons[state as usize].clone()) {
-                self.send_event("setFeedback", context, json!({"icon": icon}));
+                self.send(Outgoing::SetFeedback {
+                    context: context.to_owned(),
+                    payload: json!({"icon": icon}),
+                });
             }
         }
         let managed = settings.is_some_and(|s| s.get("images").is_some());
@@ -201,17 +236,12 @@ impl Plugin {
             // The appearance editor was never used: leave any image set in OpenDeck's own UI alone.
             return;
         }
-        let mut payload = json!({"target": 0, "state": state});
-        match image {
-            Some(image) => {
-                payload["image"] = json!(image);
-                st.custom_shown.insert(context.to_owned());
-            }
-            None => {
-                st.custom_shown.remove(context);
-            }
+        if image.is_some() {
+            st.custom_shown.insert(context.to_owned());
+        } else {
+            st.custom_shown.remove(context);
         }
-        self.send_event("setImage", context, payload);
+        self.send(Outgoing::SetImage { context: context.to_owned(), image, state });
     }
 
     /// Changes one plugin-wide setting and saves them all. OpenDeck replaces the whole
@@ -225,24 +255,16 @@ impl Plugin {
             st.globals[key] = value;
             st.globals.clone()
         };
-        self.send(json!({"event": "setGlobalSettings", "context": self.plugin_uuid, "payload": globals}));
+        self.send(Outgoing::SetGlobalSettings { settings: globals });
     }
 
-    /// Sends a message to the editor of every key and dial of this plugin. OpenDeck keeps
-    /// the editors it has already shown, so plugin-wide changes (the language) must reach
-    /// them too, not only the editor where the change was made.
-    fn broadcast_to_editors(&self, payload: &Value) {
-        let contexts: Vec<String> = {
-            let st = self.lock();
-            let mut all: Vec<String> =
-                st.settings.keys().chain(st.states.keys()).filter(|c| !c.is_empty()).cloned().collect();
-            all.sort_unstable();
-            all.dedup();
-            all
-        };
-        for context in contexts {
-            self.to_pi(&context, payload.clone());
-        }
+    /// Sends a message to the editor of every visible key and dial of this plugin.
+    /// OpenDeck keeps the editors it has already shown, so plugin-wide changes (the
+    /// language) must reach them too, not only the editor where the change was made.
+    /// Editors of keys that are not visible catch up when they are shown again (they ask
+    /// for `status` whenever they become visible).
+    fn broadcast_to_editors(&self, payload: Value) {
+        self.send(Outgoing::ToAllEditors { payload });
     }
 
     fn settings_of(&self, context: &str) -> Value {
@@ -465,7 +487,7 @@ impl Plugin {
             st.settings.insert(context.to_owned(), s.clone());
             s
         };
-        self.send_event("setSettings", context, settings);
+        self.send(Outgoing::SetSettings { context: context.to_owned(), settings });
         self.set_state(context, STATE_IDLE);
         log!("recorded {} events into {slot}", events.len());
         self.to_pi(context, json!({"type": "recorded", "events": events, "slot": slot}));
@@ -481,69 +503,64 @@ impl Plugin {
         self.lock().recording_ctx.as_deref() == Some(context)
     }
 
-    // ------------------------------------------------------------ event dispatch
+    // ------------------------------------------------------------ events from OpenDeck
+    // Called by `host.rs`, one event at a time, in the order OpenDeck sends them.
 
-    pub fn handle(self: &Arc<Self>, msg: &Value) {
-        let event = msg.get("event").and_then(Value::as_str).unwrap_or("");
-        let context = msg.get("context").and_then(Value::as_str).unwrap_or("");
-        let empty = json!({});
-        let payload = msg.get("payload").unwrap_or(&empty);
-        debug_log!("<- {}", shorten_for_log(&msg.to_string()));
+    fn store_settings(&self, context: &str, settings: &Value) {
+        self.lock().settings.insert(context.to_owned(), settings.clone());
+    }
 
-        {
-            let mut st = self.lock();
-            // Per-key settings only: commands carry their own, and global settings are not a key's.
-            if !matches!(event, "sendToPlugin" | "didReceiveGlobalSettings")
-                && !context.is_empty()
-                && let Some(settings) = payload.get("settings")
-            {
-                st.settings.insert(context.to_owned(), settings.clone());
-            }
-            if let Some(controller) = payload.get("controller").and_then(Value::as_str) {
-                st.controllers.insert(context.to_owned(), controller.to_owned());
-            }
+    /// A key or dial of this plugin becomes visible (`willAppear`).
+    pub fn on_appear(&self, context: &str, controller: &str, settings: &Value) {
+        let mut st = self.lock();
+        st.settings.insert(context.to_owned(), settings.clone());
+        st.controllers.insert(context.to_owned(), controller.to_owned());
+        let busy = st.players.contains_key(context) || st.recording_ctx.as_deref() == Some(context);
+        if !busy {
+            st.states.insert(context.to_owned(), STATE_IDLE);
         }
+        self.apply_image(&mut st, context);
+    }
 
-        match event {
-            "willAppear" => {
-                let mut st = self.lock();
-                let busy = st.players.contains_key(context) || st.recording_ctx.as_deref() == Some(context);
-                if !busy {
-                    st.states.insert(context.to_owned(), STATE_IDLE);
-                }
-                self.apply_image(&mut st, context);
-            }
-            "didReceiveSettings" => {
-                let mut st = self.lock();
-                self.apply_image(&mut st, context); // appearance may have changed
-            }
-            "keyDown" | "dialDown" | "touchTap" => {
-                if self.is_recording(context) {
-                    self.stop_recording(false); // pressing the deck key / dial ends the recording
-                } else {
-                    self.play(context);
-                }
-            }
-            "dialRotate" => {
-                if !self.is_recording(context) {
-                    self.rotate(context, payload.get("ticks").and_then(Value::as_i64).unwrap_or(0));
-                }
-            }
-            "willDisappear" => self.stop_playing(context),
-            "didReceiveGlobalSettings" => {
-                let globals =
-                    payload.get("settings").filter(|v| v.is_object()).cloned().unwrap_or_else(|| json!({}));
-                DEBUG
-                    .store(globals.get("debug").and_then(Value::as_bool).unwrap_or(false), Ordering::Relaxed);
-                self.lock().globals = globals;
-            }
-            "sendToPlugin" => self.handle_command(context, payload),
-            _ => {}
+    /// The key is no longer visible (`willDisappear`): stop its playback.
+    pub fn on_disappear(&self, context: &str) {
+        self.stop_playing(context);
+    }
+
+    /// New settings saved by the property inspector (`didReceiveSettings`).
+    pub fn on_settings(&self, context: &str, settings: &Value) {
+        let mut st = self.lock();
+        st.settings.insert(context.to_owned(), settings.clone());
+        self.apply_image(&mut st, context); // the appearance may have changed
+    }
+
+    /// Key press, dial press or touch tap.
+    pub fn on_press(self: &Arc<Self>, context: &str, settings: &Value) {
+        self.store_settings(context, settings);
+        if self.is_recording(context) {
+            self.stop_recording(false); // pressing the deck key / dial ends the recording
+        } else {
+            self.play(context);
         }
     }
 
-    /// Commands sent by the property inspector.
-    fn handle_command(self: &Arc<Self>, context: &str, payload: &Value) {
+    /// Dial rotation, `ticks` > 0 to the right.
+    pub fn on_rotate(self: &Arc<Self>, context: &str, settings: &Value, ticks: i16) {
+        self.store_settings(context, settings);
+        if !self.is_recording(context) {
+            self.rotate(context, i64::from(ticks));
+        }
+    }
+
+    /// Plugin-wide settings (`didReceiveGlobalSettings`).
+    pub fn on_global_settings(&self, settings: &Value) {
+        let globals = if settings.is_object() { settings.clone() } else { json!({}) };
+        DEBUG.store(globals.get("debug").and_then(Value::as_bool).unwrap_or(false), Ordering::Relaxed);
+        self.lock().globals = globals;
+    }
+
+    /// Commands sent by the property inspector (`sendToPlugin`).
+    pub fn on_command(self: &Arc<Self>, context: &str, payload: &Value) {
         let slot = match payload.get("slot").and_then(Value::as_str) {
             Some(SLOT_CW) => SLOT_CW,
             Some(SLOT_CCW) => SLOT_CCW,
@@ -620,7 +637,7 @@ impl Plugin {
                         && language.chars().all(|c| c.is_ascii_alphabetic() || c == '-' || c == '_');
                 if valid {
                     self.set_global("language", json!(language));
-                    self.broadcast_to_editors(&json!({"type": "language", "language": language}));
+                    self.broadcast_to_editors(json!({"type": "language", "language": language}));
                 }
             }
             "status" => {

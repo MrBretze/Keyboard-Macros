@@ -151,11 +151,11 @@ Every push and pull request runs the tests and builds all platforms on GitHub Ac
 
 | File | Purpose |
 |---|---|
-| `src/main.rs` | Entry point: arguments, connection to OpenDeck |
+| `src/main.rs` | Entry point: arguments, async runtime |
 | `src/plugin.rs` | Plugin logic: events, playback, dial queue, recording, key images, About tab commands |
 | `src/recorder.rs` | Recording logic shared by every platform (filtering, merging, delays, limits) |
 | `src/input/linux.rs`, `windows.rs`, `macos.rs` | Keyboard and mouse simulation, capture and diagnostics for each OS |
-| `src/ws.rs` | WebSocket connection to OpenDeck |
+| `src/host.rs` | Connection to OpenDeck through the [`openaction`](https://crates.io/crates/openaction) crate |
 | `src/common.rs` | Shared helpers: macro format, key codes, logging |
 | `com.mrbretzel.keymacro.sdPlugin/` | The plugin folder: `manifest.json`, icons, editor (`pi/`) and plugin name translations (`lang/`) |
 | `pi/index.html` | Editor (Property Inspector) |

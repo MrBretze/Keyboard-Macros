@@ -9,7 +9,7 @@ Keyboard Macros: an OpenDeck plugin that records, edits and replays keyboard and
 - **Engine**: Rust executable in `src/`. One background process for all keys, started by OpenDeck and running as long as OpenDeck is open.
 - **Editor** (Property Inspector): plain HTML/JS, no build step, in `com.mrbretzel.keymacro.sdPlugin/pi/`.
 
-They never talk directly: OpenDeck relays every message over a local WebSocket. `docs/ARCHITECTURE.md` is the reference for the lifecycle, threads, message protocol and stored data. Keep it in sync when that behaviour changes.
+They never talk directly: OpenDeck relays every message over a local WebSocket. The engine uses the official `openaction` crate for that connection. `docs/ARCHITECTURE.md` is the reference for the lifecycle, threads, message protocol and stored data. Keep it in sync when that behaviour changes.
 
 ## Commands
 
@@ -50,6 +50,11 @@ cargo audit                                              # known vulnerabilities
   - `diagnostics()`.
 
   Filtering, movement merging, delays and the event cap live once in `src/recorder.rs` (`RecorderCore`), fed by each backend.
+- **Connection (`src/host.rs`).** It is the only async code (tokio). The `openaction` crate calls `MacroAction` / `GlobalHandler`, which forward to `Plugin::on_*` inside `block_in_place`. `Plugin` and its threads never call the crate: they queue `Outgoing` messages, which `host::deliver` sends in order. A new OpenDeck message type means:
+  1. a variant in `Outgoing`;
+  2. a case in `deliver_one` and in `describe`.
+
+  Messages for keys that are no longer visible are dropped, because the crate only knows visible instances.
 - **Plugin state.** `src/plugin.rs` keeps all mutable state behind one `Mutex<State>`. Playback runs on its own thread per key. Key state changes that must not race (end of playback) go through `set_state_locked`. Delays from settings are user-controlled: always go through `bounded_delay`, and use saturating arithmetic on values from settings or the OS.
 - **Errors are codes, not text.** The engine sends `{"type":"error","code":...}`. Every code needs an `error.<code>` entry in both `pi/locales/en.js` and `fr.js`. The engine contains no user-facing strings.
 - **Global settings.** They hold `language` and `debug`. OpenDeck replaces the whole object on save, so always change them through `Plugin::set_global`, which saves the full object. A language change is broadcast to every key's editor (`broadcast_to_editors`), because OpenDeck keeps already-shown editors alive without reloading them.

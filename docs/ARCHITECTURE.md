@@ -25,7 +25,7 @@ flowchart LR
 There is **one engine process for all the keys and dials** that use the plugin. It is not started when a key is pressed: it runs in the background as long as OpenDeck is open, like every OpenDeck and Stream Deck plugin.
 
 1. **OpenDeck starts.** It launches the executable that matches the system, as listed in `CodePaths` in `manifest.json`, with `-port <p> -pluginUUID <id> -registerEvent <event> -info <json>`.
-2. **The engine connects.** It opens a WebSocket to `127.0.0.1:<port>`, registers itself, and asks for its global settings: the interface language and the verbose log switch.
+2. **The engine connects.** Through the [`openaction`](https://crates.io/crates/openaction) crate, the official Rust library of the OpenAction plugin API, it opens a WebSocket to `127.0.0.1:<port>`, registers itself, and asks for its global settings: the interface language and the verbose log switch.
 3. **Idle.** The engine waits for messages. Measured on Linux: about 1.3 MB of memory and no measurable CPU time.
 4. **A key or dial appears** (`willAppear`), for example after a profile or page change. The engine receives that action's settings and shows its image.
 5. **A key is pressed** (`keyDown`, `dialDown`, `touchTap`, `dialRotate`). A playback thread replays the macro, then ends. See [Playback](#playback).
@@ -36,12 +36,12 @@ There is **one engine process for all the keys and dials** that use the plugin. 
 
 | Thread | Lives | Role |
 |---|---|---|
-| Main | Whole session | Decodes OpenDeck's messages and reacts to them (`src/main.rs`, `src/plugin.rs`) |
-| Network | Whole session | Owns the WebSocket: sends the queued messages and reads incoming ones (`src/ws.rs`). Any thread can send a message without waiting for a read. |
+| Async runtime (tokio, 2 worker threads) | Whole session | Runs the `openaction` crate: the WebSocket, the decoding of OpenDeck's events, and the calls to `Plugin`'s `on_*` entry points (`src/host.rs`). Events are handled one at a time, in order. |
+| Delivery task (on the runtime) | Whole session | Sends the `Outgoing` messages queued by any thread, one after the other, so OpenDeck receives them in the order they were produced. No thread ever waits for the network (`host::deliver`). |
 | Playback | One per playing key, until its macro ends | Replays the events with their delays (`Plugin::play_pass`) |
 | Recording | From "Record" to "Stop" | Reads keyboards (and mice, if enabled) and turns them into events (`src/recorder.rs` and the platform backend) |
 
-The shared state (settings, key states, running playbacks, dial queues, current recording) sits behind a single lock in `Plugin`.
+The shared state (settings, key states, running playbacks, dial queues, current recording) sits behind a single lock in `Plugin`. `Plugin` itself is synchronous: `host.rs` is the only place that deals with async code and the `openaction` crate.
 
 ## Playback
 
@@ -106,7 +106,9 @@ The engine has no graphics library. **Custom key images are therefore drawn by t
 
 ## Messages
 
-All messages are JSON over the local WebSocket, following the Stream Deck SDK.
+All messages are JSON over the local WebSocket, following the Stream Deck SDK. The `openaction` crate encodes and decodes them; `host.rs` maps them to `Plugin` calls and `Outgoing` messages.
+
+A message for a key that has disappeared (page or profile change) is dropped: the crate only knows the visible keys.
 
 **From OpenDeck to the engine:**
 
@@ -173,8 +175,8 @@ Errors are sent as **codes**, for example `uinput_failed` or `permission_accessi
 
 | File | Role |
 |---|---|
-| `src/main.rs` | Arguments, connection, main loop |
-| `src/ws.rs` | WebSocket thread |
+| `src/main.rs` | Argument check, async runtime, start of the connection |
+| `src/host.rs` | Bridge to the `openaction` crate: the action and global event handler, in-order delivery of `Outgoing` messages, crate log records to `plugin.log` |
 | `src/plugin.rs` | Events, playback, dial queue, recording control, images, editor commands |
 | `src/recorder.rs` | Platform-independent recording logic |
 | `src/common.rs` | Event format, key codes, logging |

@@ -2,66 +2,60 @@
 //! keyboard and mouse macros.
 //!
 //! A single self-contained executable: OpenDeck starts it with
-//! `-port <p> -pluginUUID <id> -registerEvent <event> -info <json>`.
+//! `-port <p> -pluginUUID <id> -registerEvent <event> -info <json>`. The connection to
+//! OpenDeck goes through the `openaction` crate (see `host.rs`).
 
 // No console window on Windows.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod common;
+mod host;
 mod input;
 mod plugin;
 mod recorder;
-mod ws;
-
-use serde_json::{Value, json};
-use std::collections::HashMap;
 
 fn main() {
-    // Arguments come in "-name value" pairs.
-    let argv: Vec<String> = std::env::args().skip(1).collect();
-    let args: HashMap<&str, &str> = argv
-        .chunks(2)
-        .filter_map(|pair| match pair {
-            [name, value] => Some((name.trim_start_matches('-'), value.as_str())),
-            _ => None,
-        })
-        .collect();
+    let args: Vec<String> = std::env::args().collect();
+    let flag = |name: &str| {
+        let i = args.iter().position(|a| a.eq_ignore_ascii_case(name))?;
+        args.get(i + 1).map(String::as_str)
+    };
     log!(
         "start {} {}/{} (port {})",
         env!("CARGO_PKG_VERSION"),
         std::env::consts::OS,
         std::env::consts::ARCH,
-        args.get("port").unwrap_or(&"?")
+        flag("-port").unwrap_or("?")
     );
 
-    let (Some(port), Some(uuid), Some(register)) = (
-        args.get("port").and_then(|p| p.parse::<u16>().ok()),
-        args.get("pluginUUID"),
-        args.get("registerEvent"),
-    ) else {
+    // `openaction::run` panics on a missing flag: check them first for a clear message.
+    if ["-port", "-pluginUUID", "-registerEvent", "-info"].iter().any(|f| flag(f).is_none()) {
         eprintln!("Keyboard Macros is an OpenDeck plugin: it is started by OpenDeck, not by hand.");
-        log!("missing -port / -pluginUUID / -registerEvent arguments");
+        log!("missing -port / -pluginUUID / -registerEvent / -info arguments");
         std::process::exit(2);
-    };
+    }
 
-    let (out, incoming) = match ws::connect(port) {
-        Ok(channels) => channels,
+    host::init_log_bridge();
+    // Two worker threads are plenty: the runtime only carries the connection; playback
+    // and recording run on their own threads.
+    let runtime = match tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build() {
+        Ok(runtime) => runtime,
         Err(e) => {
-            log!("cannot connect to OpenDeck: {e}");
+            log!("cannot start the async runtime: {e}");
             std::process::exit(1);
         }
     };
-    let _ = out.send(json!({"event": register, "uuid": uuid}).to_string());
-    // Global settings hold the "verbose logging" switch of the About tab.
-    let _ = out.send(json!({"event": "getGlobalSettings", "context": uuid}).to_string());
 
-    let plugin = plugin::Plugin::new(out, uuid.to_string());
-    for text in incoming {
-        match serde_json::from_str::<Value>(&text) {
-            Ok(msg) => plugin.handle(&msg),
-            Err(e) => log!("invalid message from OpenDeck: {e}"),
+    runtime.block_on(async {
+        let (queue, outgoing) = tokio::sync::mpsc::unbounded_channel();
+        let plugin = plugin::Plugin::new(queue);
+        tokio::spawn(host::deliver(outgoing));
+        host::install(plugin.clone()).await;
+        // Connects, registers, then handles OpenDeck's events until the connection closes.
+        if let Err(e) = openaction::run(args.clone()).await {
+            log!("connection to OpenDeck failed: {e}");
         }
-    }
-    log!("connection closed");
-    plugin.shutdown();
+        log!("connection closed");
+        plugin.shutdown();
+    });
 }

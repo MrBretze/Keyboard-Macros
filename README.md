@@ -4,7 +4,7 @@
 
 <h1 align="center">Keyboard Macros for OpenDeck</h1>
 
-An OpenDeck (and Stream Deck) plugin that records keyboard and mouse sequences with their timing, lets you edit them, and replays them from a deck key. It works with keys and Stream Deck+ dials, runs on Linux and Windows, and its interface is available in English and French.
+An OpenDeck (and Stream Deck) plugin that records keyboard and mouse sequences with their timing, lets you edit them, and replays them from a deck key. It works with keys and Stream Deck+ dials, runs on Linux, Windows and macOS, and its interface is available in English and French.
 
 ![The plugin in OpenDeck: a macro on a key and on a Stream Deck+ dial, with the macro editor below](data/screenshot.png)
 
@@ -19,15 +19,21 @@ On **Linux**, your user needs access to the input devices:
 | Read/write access to `/dev/uinput` | Simulating keyboard and mouse input | Add your user to the `input` group (`sudo usermod -aG input $USER`), then log out and back in. Some distributions grant it to the logged-in user already. |
 | Read access to `/dev/input/event*` | Recording keyboard and mouse input | Same `input` group as above. |
 
-If an access is missing, the editor shows an error explaining what to fix.
+On **macOS** (10.15 or newer), allow OpenDeck in System Settings → Privacy & Security:
+- **Accessibility**, to replay macros;
+- **Input Monitoring**, to record them.
+
+macOS asks the first time the plugin needs them. Restart OpenDeck after allowing it.
+
+If an access is missing, the editor shows an error explaining what to fix, and the About tab's diagnostics check it.
 
 ## Installation
 
 Install it from OpenDeck's plugin list, or download `KeyboardMacros-<version>.zip` from the [latest release](https://github.com/MrBretze/Keyboard-Macros/releases/latest) and use "Install from file" in OpenDeck. Then restart OpenDeck.
 
-The release contains executables for Linux x86_64, Linux ARM64 (aarch64) and Windows x86_64. OpenDeck picks the right one.
+The release contains executables for Linux x86_64, Linux ARM64 (aarch64), Windows x86_64 and macOS (one universal executable for Intel and Apple Silicon). OpenDeck picks the right one.
 
-Windows support is built and tested automatically, but has not been tried on a real Windows machine yet. macOS is not supported: there is no macOS input backend.
+Windows and macOS support is built and unit-tested automatically, but has not been tried on a real Windows machine or Mac yet. The macOS executable is not signed by Apple, so macOS may refuse to start it.
 
 ### Building from source
 
@@ -35,6 +41,7 @@ You need [Rust](https://rustup.rs).
 
 - **Linux**: `./install.sh` builds a static executable (`musl` target) and copies the plugin into OpenDeck's plugin folder (Flatpak or native).
 - **Windows**: `powershell -ExecutionPolicy Bypass -File install.ps1` builds and installs the plugin. Add `-StreamDeck` to install it into the Elgato software instead.
+- **macOS**: run `cargo build --release`, copy `target/release/keymacro` to `com.mrbretzel.keymacro.sdPlugin/keymacro-macos`, then copy the plugin folder into OpenDeck's plugin folder.
 
 `cargo test` runs the unit tests. Every push builds all platforms on GitHub Actions. Pushing a `v*` tag attaches the zip to the matching release.
 
@@ -90,6 +97,11 @@ Notches turned while a turn macro is playing are queued, up to 50. Turning the o
   - Recording uses low-level keyboard and mouse hooks, and simulated input is ignored.
   - Brightness keys are not supported.
   - Windows blocks keystrokes sent to windows running as administrator.
+- **macOS**:
+  - Keys, mouse buttons, movements and the wheel are sent as CoreGraphics events. Movements place the cursor exactly.
+  - Recording uses a listen-only event tap, and simulated input is ignored.
+  - Keys without a Mac equivalent are not supported: Scroll Lock, Print Screen, Pause, Power, media and browser keys, brightness and F21-F24.
+  - A macro replays physical keys: Ctrl+C recorded on Linux stays Ctrl+C on a Mac, it does not become ⌘+C.
 - Custom key images are drawn in the settings panel and stored in the action settings. The plugin then sends the right image to the deck for each state.
 - Log: `plugin.log` in the installed plugin folder (times in UTC), also shown in the About tab. Past 1 MB it is renamed `plugin.log.old` and a new one starts.
 
@@ -100,7 +112,7 @@ Notches turned while a turn macro is playing are queued, up to 50. Turning the o
 | `src/main.rs` | Entry point: arguments, connection to OpenDeck |
 | `src/plugin.rs` | Plugin logic: events, playback, dial queue, recording, key images |
 | `src/recorder.rs` | Recording logic shared by every platform (filtering, merging, delays) |
-| `src/input/linux.rs` / `src/input/windows.rs` | Keyboard and mouse simulation and capture for each OS |
+| `src/input/linux.rs` / `windows.rs` / `macos.rs` | Keyboard and mouse simulation and capture for each OS |
 | `src/ws.rs`, `src/common.rs` | WebSocket connection; shared helpers (macro format, logging) |
 | `.github/workflows/release.yml` | Builds, tests and packages all platforms |
 | `com.mrbretzel.keymacro.sdPlugin/` | The plugin folder: manifest, icons and editor |

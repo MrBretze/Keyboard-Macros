@@ -10,10 +10,13 @@
 	"CategoryIcon": "icons/plugin",
 	"CodePathLin": "keymacro-linux-x86_64",
 	"CodePathWin": "keymacro-windows-x86_64.exe",
+	"CodePathMac": "keymacro-macos",
 	"CodePaths": {
 		"x86_64-unknown-linux-gnu": "keymacro-linux-x86_64",
 		"aarch64-unknown-linux-gnu": "keymacro-linux-aarch64",
-		"x86_64-pc-windows-msvc": "keymacro-windows-x86_64.exe"
+		"x86_64-pc-windows-msvc": "keymacro-windows-x86_64.exe",
+		"x86_64-apple-darwin": "keymacro-macos",
+		"aarch64-apple-darwin": "keymacro-macos"
 	},
 	"OS": [
 		{
@@ -22,6 +25,10 @@
 		{
 			"Platform": "windows",
 			"MinimumVersion": "10"
+		},
+		{
+			"Platform": "mac",
+			"MinimumVersion": "10.15"
 		}
 	],
 	"Software": {

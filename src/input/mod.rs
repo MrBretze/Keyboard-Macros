@@ -15,5 +15,10 @@ mod windows;
 #[cfg(windows)]
 pub use windows::{RecorderHandle, VirtualInput, diagnostics, start_recording};
 
-#[cfg(not(any(target_os = "linux", windows)))]
-compile_error!("Keyboard Macros supports Linux and Windows only.");
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "macos")]
+pub use macos::{RecorderHandle, VirtualInput, diagnostics, start_recording};
+
+#[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
+compile_error!("Keyboard Macros supports Linux, Windows and macOS only.");

@@ -15,7 +15,7 @@ use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Prefix of our virtual devices' names, so the recorder can ignore our own output.
-#[cfg_attr(windows, allow(dead_code))] // only the Linux backend creates named devices
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // only the Linux backend creates named devices
 pub const VIRTUAL_PREFIX: &str = "OpenDeck KeyMacro";
 
 pub const KEY_MAX: u16 = 0x2FF;
@@ -152,7 +152,9 @@ pub fn clear_log() -> std::io::Result<()> {
 pub fn open_folder(path: &Path) -> std::io::Result<()> {
     #[cfg(windows)]
     let mut command = std::process::Command::new("explorer");
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(not(any(windows, target_os = "macos")))]
     let mut command = std::process::Command::new("xdg-open");
     command.arg(path).spawn().map(|_| ())
 }

@@ -50,8 +50,36 @@ jobs:
           path: dist/${{ matrix.out }}
           if-no-files-found: error
 
+  macos:
+    name: macos-universal
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "10.15" # oldest macOS with the permission APIs used
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --target aarch64-apple-darwin,x86_64-apple-darwin && rustup default stable
+      - name: Test
+        run: cargo test --locked
+      - name: Build (Apple Silicon and Intel)
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+      - name: Merge into one universal executable
+        run: |
+          mkdir -p dist
+          lipo -create -output dist/keymacro-macos \
+            target/aarch64-apple-darwin/release/keymacro \
+            target/x86_64-apple-darwin/release/keymacro
+          lipo -info dist/keymacro-macos
+      - uses: actions/upload-artifact@v4
+        with:
+          name: keymacro-macos
+          path: dist/keymacro-macos
+          if-no-files-found: error
+
   package:
-    needs: build
+    needs: [build, macos]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -71,7 +99,7 @@ jobs:
       - name: Assemble the zip
         run: |
           cp dist/keymacro-* "$PLUGIN/"
-          chmod 755 "$PLUGIN"/keymacro-linux-*
+          chmod 755 "$PLUGIN"/keymacro-linux-* "$PLUGIN"/keymacro-macos
           zip_name="KeyboardMacros-${{ steps.version.outputs.version }}.zip"
           zip -r -X "$zip_name" "$PLUGIN" -x "*/plugin.log"
           unzip -Z "$zip_name"

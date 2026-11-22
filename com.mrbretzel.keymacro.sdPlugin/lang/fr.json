@@ -1,0 +1,28 @@
+{
+	"Name": "Macros clavier",
+	"Description": "Enregistre, édite (timing inclus) et rejoue des macros clavier.",
+	"Category": "Macros clavier",
+	"com.mrbretzel.keymacro.macro": {
+		"Name": "Macro clavier",
+		"Tooltip": "Rejoue une macro clavier enregistrée (appuyer à nouveau pour l'arrêter)",
+		"States": [
+			{
+				"Name": "Prêt"
+			},
+			{
+				"Name": "Lecture"
+			},
+			{
+				"Name": "Enregistrement"
+			}
+		],
+		"Encoder": {
+			"TriggerDescription": {
+				"Rotate": "Tourner à droite / gauche : joue la macro correspondante une fois par cran",
+				"Push": "Lancer / arrêter la macro principale",
+				"Touch": "Lancer / arrêter la macro principale"
+			}
+		}
+	},
+	"Localization": {}
+}

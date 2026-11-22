@@ -1,0 +1,28 @@
+{
+	"Name": "Keyboard Macros",
+	"Description": "Record, edit (timing included) and replay keyboard macros.",
+	"Category": "Keyboard Macros",
+	"com.mrbretzel.keymacro.macro": {
+		"Name": "Keyboard macro",
+		"Tooltip": "Replays a recorded keyboard macro (press again to stop it)",
+		"States": [
+			{
+				"Name": "Ready"
+			},
+			{
+				"Name": "Playing"
+			},
+			{
+				"Name": "Recording"
+			}
+		],
+		"Encoder": {
+			"TriggerDescription": {
+				"Rotate": "Turn right / left: run the matching macro once per notch",
+				"Push": "Play / stop the main macro",
+				"Touch": "Play / stop the main macro"
+			}
+		}
+	},
+	"Localization": {}
+}

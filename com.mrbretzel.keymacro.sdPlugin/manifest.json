@@ -1,0 +1,68 @@
+{
+	"Name": "Keyboard Macros",
+	"Description": "Record, edit (timing included) and replay keyboard macros.",
+	"Author": "mrbretzel",
+	"Version": "1.3.0",
+	"SDKVersion": 2,
+	"Icon": "icons/plugin",
+	"Category": "Keyboard Macros",
+	"CategoryIcon": "icons/plugin",
+	"CodePath": "plugin.py",
+	"CodePathLin": "plugin.py",
+	"CodePathWin": "plugin.exe",
+	"CodePaths": {
+		"x86_64-unknown-linux-gnu": "plugin.py",
+		"aarch64-unknown-linux-gnu": "plugin.py",
+		"x86_64-pc-windows-msvc": "plugin.exe"
+	},
+	"OS": [
+		{
+			"Platform": "linux"
+		},
+		{
+			"Platform": "windows",
+			"MinimumVersion": "10"
+		}
+	],
+	"Software": {
+		"MinimumVersion": "6.0"
+	},
+	"Actions": [
+		{
+			"UUID": "com.mrbretzel.keymacro.macro",
+			"Name": "Keyboard macro",
+			"Icon": "icons/action",
+			"Tooltip": "Replays a recorded keyboard macro (press again to stop it)",
+			"Controllers": [
+				"Keypad",
+				"Encoder"
+			],
+			"SupportedInMultiActions": true,
+			"DisableAutomaticStates": true,
+			"PropertyInspectorPath": "pi/index.html",
+			"States": [
+				{
+					"Image": "icons/state_idle",
+					"Name": "Ready"
+				},
+				{
+					"Image": "icons/state_play",
+					"Name": "Playing"
+				},
+				{
+					"Image": "icons/state_rec",
+					"Name": "Recording"
+				}
+			],
+			"Encoder": {
+				"layout": "$X1",
+				"Icon": "icons/action",
+				"TriggerDescription": {
+					"Rotate": "Turn right / left: run the matching macro once per notch",
+					"Push": "Play / stop the main macro",
+					"Touch": "Play / stop the main macro"
+				}
+			}
+		}
+	]
+}

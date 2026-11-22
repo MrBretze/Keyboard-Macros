@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.pyc
+
+# Runtime log written next to the plugin
+plugin.log
+
+# Windows build (build_windows.bat)
+build/
+com.mrbretzel.keymacro.sdPlugin/plugin.exe
+
+# IDE
+.idea/
+.vscode/

@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Keyboard macro</title>
+<script src="i18n.js"></script>
+<script src="locales/en.js"></script>
+<script src="locales/fr.js"></script>
+<script src="keys.js"></script>
+<script src="appearance.js"></script>
+<style>
+	:root {
+		--bg: #2d2d2d; --panel: #3a3a3a; --line: #4a4a4a; --text: #d8d8d8; --muted: #9a9a9a;
+		--accent: #4e8cff; --rec: #e5484d; --ok: #30a46c; --warn: #f5a524;
+		color-scheme: dark; /* dark native widgets (popups, spinners, scrollbars) */
+	}
+	* { box-sizing: border-box; }
+	body { margin: 0; padding: 10px 12px; background: var(--bg); color: var(--text);
+		font: 12px/1.4 system-ui, sans-serif; }
+	h3, summary.h { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+		margin: 14px 0 6px; font-weight: 600; }
+	summary.h { cursor: pointer; }
+	button { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+		border-radius: 4px; padding: 4px 8px; font: inherit; cursor: pointer; }
+	button:hover { border-color: #666; }
+	button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+	button.rec { background: var(--rec); border-color: var(--rec); color: #fff; }
+	button.icon { padding: 2px 5px; min-width: 22px; }
+	button:disabled { opacity: .4; cursor: default; }
+	input, select, textarea { background: #232323; color: var(--text); border: 1px solid var(--line);
+		border-radius: 4px; padding: 3px 5px; font: inherit; }
+	/* Native GTK/WebKit selects ignore the dark colors: draw them entirely in CSS. */
+	select {
+		-webkit-appearance: none; -moz-appearance: none; appearance: none;
+		background-color: #232323; color: var(--text);
+		background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0l5 6 5-6z' fill='%239a9a9a'/></svg>");
+		background-repeat: no-repeat; background-position: right 7px center;
+		padding: 3px 22px 3px 6px; min-height: 24px; cursor: pointer;
+	}
+	select:hover { border-color: #666; }
+	option { background: #232323; color: var(--text); }
+	input[type=number] { width: 70px; }
+	input[type=color] { -webkit-appearance: none; appearance: none; width: 34px; height: 24px; padding: 2px; cursor: pointer; }
+	input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
+	input[type=color]::-webkit-color-swatch { border: none; border-radius: 2px; }
+	input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+	.row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
+	.row label { color: var(--muted); }
+	.grow { flex: 1; }
+	#status { padding: 6px 8px; border-radius: 4px; background: var(--panel); margin-top: 6px; }
+	#status.recording { background: rgba(229,72,77,.2); color: #ffb3b5; }
+	#status.playing { background: rgba(48,164,108,.2); color: #9be2bd; }
+	#status.error { background: rgba(245,165,36,.2); color: #ffd58a; }
+	.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--rec);
+		margin-right: 6px; animation: blink 1s infinite; }
+	@keyframes blink { 50% { opacity: .2; } }
+
+	table { width: 100%; border-collapse: collapse; }
+	th { text-align: left; color: var(--muted); font-weight: 500; padding: 3px 4px;
+		border-bottom: 1px solid var(--line); font-size: 11px; }
+	td { padding: 2px 4px; border-bottom: 1px solid #353535; vertical-align: middle; }
+	tr.disabled td { opacity: .4; }
+	td.idx { color: var(--muted); width: 22px; text-align: right; }
+	td.key input { width: 100%; min-width: 80px; }
+	.kname { color: var(--muted); font-size: 10px; font-family: monospace; }
+	.dir { min-width: 70px; padding: 2px 6px; white-space: nowrap; }
+	.dir.down { color: #9be2bd; }
+	.dir.up { color: #ffb3b5; }
+	td.delay input { width: 64px; text-align: right; }
+	.mouse-label { padding: 3px 0; }
+	.xy { display: flex; gap: 3px; align-items: center; color: var(--muted); font-size: 11px; }
+	.xy input { width: 52px; text-align: right; }
+	#recordMouseMoveLabel.off { opacity: .4; }
+	td.ops { white-space: nowrap; text-align: right; }
+	.bar { height: 3px; background: var(--accent); border-radius: 2px; margin-top: 2px; opacity: .6; }
+	.empty { color: var(--muted); text-align: center; padding: 16px; }
+	.hint { color: var(--muted); font-size: 11px; }
+	#json { width: 100%; height: 260px; font: 11px monospace; resize: vertical; }
+	#text { width: 100%; height: 44px; resize: vertical; }
+	.total { margin-left: auto; color: var(--muted); text-transform: none; letter-spacing: 0; font-weight: 400; }
+	.previews { display: flex; gap: 10px; margin: 6px 0; }
+	.previews figure { margin: 0; text-align: center; color: var(--muted); font-size: 11px; }
+	.previews canvas { width: 72px; height: 72px; border-radius: 10px; background: #000; display: block;
+		margin-bottom: 3px; box-shadow: 0 0 0 1px var(--line); }
+	.when-image, .when-custom { display: none; }
+	body.base-image .when-image, body.base-image .when-custom, body.base-color .when-custom { display: flex; }
+	.thumb { width: 28px; height: 28px; object-fit: cover; border-radius: 4px; box-shadow: 0 0 0 1px var(--line); }
+	.topbar { display: flex; gap: 8px; align-items: stretch; margin-bottom: 8px; }
+	.topbar #status { flex: 1; margin-top: 0; display: flex; flex-direction: column; justify-content: center; }
+	.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 10px; flex-wrap: wrap; }
+	.tab { background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0;
+		color: var(--muted); padding: 6px 10px; margin-bottom: -1px; }
+	.tab:hover { color: var(--text); border-color: transparent; border-bottom-color: #666; }
+	.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+	.panel { display: none; }
+	.panel.active { display: block; }
+	.slot-row { display: none; padding: 6px 8px; background: var(--panel); border-radius: 4px; margin-bottom: 8px; }
+	body.encoder .slot-row { display: flex; }
+	.encoder-only { display: none; }
+	body.encoder .encoder-only { display: block; }
+	.panel > h3:first-child { margin-top: 4px; }
+</style>
+</head>
+<body>
+	<!-- Always visible: live status and quick test -->
+	<div class="topbar">
+		<div id="status"></div>
+		<button id="btnPlay" class="primary"></button>
+	</div>
+
+	<nav class="tabs" role="tablist">
+		<button class="tab" data-tab="macro" data-i18n="tab.macro"></button>
+		<button class="tab" data-tab="playback" data-i18n="tab.playback"></button>
+		<button class="tab" data-tab="appearance" data-i18n="tab.appearance"></button>
+		<button class="tab" data-tab="language" data-i18n="tab.language"></button>
+		<button class="tab" data-tab="json" data-i18n="tab.json"></button>
+	</nav>
+
+	<!-- Tab: record / edit the macro -->
+	<section class="panel" id="tab-macro">
+		<!-- Only for dials (Stream Deck+): choose which of the three macros is edited -->
+		<div class="row slot-row" id="slotRow">
+			<label data-i18n="label.slot"></label>
+			<select id="slot">
+				<option value="events" data-i18n="slot.press"></option>
+				<option value="eventsCW" data-i18n="slot.cw"></option>
+				<option value="eventsCCW" data-i18n="slot.ccw"></option>
+			</select>
+		</div>
+		<div class="row">
+			<button id="btnRec" class="rec"></button>
+			<label><input type="checkbox" id="append" /> <span data-i18n="rec.append"></span></label>
+		</div>
+		<div class="row">
+			<label><input type="checkbox" id="recordMouse" /> <span data-i18n="rec.mouse"></span></label>
+			<label id="recordMouseMoveLabel"><input type="checkbox" id="recordMouseMove" /> <span data-i18n="rec.mouseMove"></span></label>
+		</div>
+
+		<h3 style="display:flex;align-items:center"><span data-i18n="section.events"></span><span class="total" id="total"></span></h3>
+		<div class="row">
+			<button id="addTap" data-i18n="btn.addTap" data-i18n-title="title.addTap"></button>
+			<button id="addEv" data-i18n="btn.addEvent" data-i18n-title="title.addEvent"></button>
+			<button id="addMove" data-i18n="btn.addMove" data-i18n-title="title.addMove"></button>
+			<button id="addWheel" data-i18n="btn.addWheel" data-i18n-title="title.addWheel"></button>
+			<select id="layout" data-i18n-title="title.layout">
+				<option value="azerty">AZERTY</option>
+				<option value="qwerty">QWERTY</option>
+			</select>
+			<span class="grow"></span>
+			<button id="undo" data-i18n-title="title.undo">↶</button>
+			<button id="clear" data-i18n="btn.clear" data-i18n-title="title.clear"></button>
+		</div>
+		<datalist id="keylist"></datalist>
+		<table>
+			<thead><tr><th></th><th data-i18n="th.key"></th><th data-i18n="th.action"></th><th data-i18n="th.delay"></th><th></th></tr></thead>
+			<tbody id="rows"></tbody>
+		</table>
+
+		<h3 data-i18n="section.delayTools"></h3>
+		<div class="row">
+			<button id="mul" data-i18n="btn.mul"></button><input type="number" id="mulVal" value="0.5" step="0.1" min="0" />
+			<button id="setAll" data-i18n="btn.setAll"></button><input type="number" id="setVal" value="50" step="10" min="0" /> ms
+		</div>
+		<div class="row">
+			<button id="round" data-i18n="btn.round"></button>
+			<button id="clamp" data-i18n="btn.clamp"></button><input type="number" id="clampVal" value="500" step="50" min="0" /> ms
+		</div>
+		<div class="row">
+			<button id="removeMoves" data-i18n="btn.removeMoves" data-i18n-title="title.removeMoves"></button>
+		</div>
+	</section>
+
+	<!-- Tab: playback options -->
+	<section class="panel" id="tab-playback">
+		<div class="row">
+			<label data-i18n="label.speed"></label><input type="number" id="speed" min="1" max="1000" step="5" /> %
+		</div>
+		<div class="row">
+			<label data-i18n="label.repeat"></label>
+			<input type="number" id="repeat" min="0" step="1" data-i18n-title="title.repeat" />
+			<span class="hint" data-i18n="hint.infinite"></span>
+		</div>
+		<div class="row">
+			<label data-i18n="label.repeatDelay"></label><input type="number" id="repeatDelay" min="0" step="10" /> ms
+		</div>
+		<div class="row">
+			<label><input type="checkbox" id="useFixedDelay" /> <span data-i18n="label.fixedDelay"></span></label>
+			<input type="number" id="fixedDelay" min="0" step="5" /> ms
+		</div>
+		<p class="hint" data-i18n="hint.playback"></p>
+		<p class="hint encoder-only" data-i18n="hint.dial"></p>
+	</section>
+
+	<!-- Tab: key appearance -->
+	<section class="panel" id="tab-appearance">
+		<div class="previews">
+			<figure><canvas id="pv0"></canvas><span data-i18n="state.idle"></span></figure>
+			<figure><canvas id="pv1"></canvas><span data-i18n="state.playing"></span></figure>
+			<figure><canvas id="pv2"></canvas><span data-i18n="state.recording"></span></figure>
+		</div>
+		<div class="row">
+			<label data-i18n="label.base"></label>
+			<select id="ap-base">
+				<option value="default" data-i18n="base.default"></option>
+				<option value="image" data-i18n="base.image"></option>
+				<option value="color" data-i18n="base.color"></option>
+			</select>
+		</div>
+		<div class="row when-image">
+			<img id="thumb" class="thumb" alt="" style="display:none" />
+			<button id="chooseImage" data-i18n="btn.chooseImage"></button>
+			<button id="removeImage" data-i18n="btn.removeImage"></button>
+			<input type="file" id="file" accept="image/*" style="display:none" />
+		</div>
+		<div class="row when-image">
+			<label data-i18n="label.fit"></label>
+			<select id="ap-fit">
+				<option value="cover" data-i18n="fit.cover"></option>
+				<option value="contain" data-i18n="fit.contain"></option>
+			</select>
+			<label data-i18n="label.zoom"></label><input type="number" id="ap-zoom" min="10" max="400" step="5" /> %
+		</div>
+		<div class="row when-custom">
+			<label data-i18n="label.bg"></label><input type="color" id="ap-bg" />
+			<label><input type="checkbox" id="ap-badge" /> <span data-i18n="label.badge"></span></label>
+		</div>
+		<div class="row">
+			<label data-i18n="label.text"></label>
+		</div>
+		<textarea id="text" data-i18n-placeholder="placeholder.text"></textarea>
+		<div class="row">
+			<label data-i18n="label.textSize"></label><input type="number" id="ap-textSize" min="6" max="120" step="1" />
+			<label data-i18n="label.textColor"></label><input type="color" id="ap-textColor" />
+			<label data-i18n="label.textPos"></label>
+			<select id="ap-textPos">
+				<option value="top" data-i18n="pos.top"></option>
+				<option value="middle" data-i18n="pos.middle"></option>
+				<option value="bottom" data-i18n="pos.bottom"></option>
+			</select>
+		</div>
+		<div class="row">
+			<label data-i18n="label.font"></label>
+			<select id="ap-font">
+				<option value="sans" data-i18n="font.sans"></option>
+				<option value="serif" data-i18n="font.serif"></option>
+				<option value="mono" data-i18n="font.mono"></option>
+			</select>
+			<label><input type="checkbox" id="ap-bold" /> <span data-i18n="label.bold"></span></label>
+			<label><input type="checkbox" id="ap-outline" /> <span data-i18n="label.outline"></span></label>
+		</div>
+		<div class="row">
+			<button id="resetAppearance" data-i18n="btn.resetAppearance"></button>
+		</div>
+		<p class="hint" data-i18n="hint.nativeTitle"></p>
+	</section>
+
+	<!-- Tab: interface language -->
+	<section class="panel" id="tab-language">
+		<div class="row">
+			<label data-i18n="section.language"></label>
+			<select id="lang">
+				<option value="auto" data-i18n="lang.auto"></option>
+				<option value="en">English</option>
+				<option value="fr">Français</option>
+			</select>
+		</div>
+		<p class="hint" data-i18n="hint.language"></p>
+	</section>
+
+	<!-- Tab: import / export. The text area always shows the current macro (export);
+	     edit or paste JSON, then click Import. -->
+	<section class="panel" id="tab-json">
+		<textarea id="json" spellcheck="false"></textarea>
+		<div class="row">
+			<button id="import" data-i18n="btn.import"></button>
+			<button id="revertJson" data-i18n="btn.revertJson" data-i18n-title="title.revertJson"></button>
+		</div>
+		<p class="hint" data-i18n="hint.jsonEdit"></p>
+		<p class="hint" data-i18n="hint.json"></p>
+	</section>
+
+<script>
+let ws = null, ctx = null, actionUUID = null, hostInfo = null;
+let settings = {};
+let liveRec = null;   // events streamed by the backend while recording
+let history = [];     // undo stack (JSON snapshots of the edited macro)
+let slot = "events";  // edited macro: "events" (press), "eventsCW" / "eventsCCW" (dial turns)
+let isEncoder = false;
+let state = { recording: false, playing: false };
+let statusMsg = null; // last explicit status message: {key, params, cls, extraKey, extraParams}
+
+const $ = (id) => document.getElementById(id);
+const DEFAULTS = { events: [], speed: 100, repeat: 1, repeatDelay: 0, useFixedDelay: false, fixedDelay: 50 };
+
+// Entry point called by OpenDeck / Stream Deck.
+function connectElgatoStreamDeckSocket(inPort, inUUID, inRegisterEvent, inInfo, inActionInfo) {
+	try { hostInfo = JSON.parse(inInfo); } catch (e) { hostInfo = null; }
+	const info = JSON.parse(inActionInfo);
+	ctx = inUUID;
+	actionUUID = info.action;
+	settings = Object.assign({}, DEFAULTS, info.payload.settings || {});
+	if (info.payload.controller) setController(info.payload.controller);
+	setLanguage(detectLanguage(hostInfo));
+	ws = new WebSocket("ws://127.0.0.1:" + inPort);
+	ws.onopen = () => {
+		ws.send(JSON.stringify({ event: inRegisterEvent, uuid: inUUID }));
+		toPlugin({ cmd: "status" });
+	};
+	ws.onmessage = (e) => onMessage(JSON.parse(e.data));
+	loadUI();
+}
+
+function toPlugin(payload) {
+	if (ws && ws.readyState === 1)
+		ws.send(JSON.stringify({ event: "sendToPlugin", action: actionUUID, context: ctx, payload }));
+}
+
+let saveTimer = null;
+function save() {
+	clearTimeout(saveTimer);
+	saveTimer = setTimeout(() => {
+		if (ws && ws.readyState === 1)
+			ws.send(JSON.stringify({ event: "setSettings", context: ctx, payload: settings }));
+	}, 150);
+}
+
+function pushHistory() {
+	history.push(JSON.stringify(evs()));
+	if (history.length > 50) history.shift();
+}
+
+// Default table labels follow the language until the user picks a layout.
+function currentLayout() {
+	return settings.layout || (currentLang === "fr" ? "azerty" : "qwerty");
+}
+
+function onMessage(msg) {
+	if (msg.event === "didReceiveSettings" && msg.payload && msg.payload.settings) {
+		settings = Object.assign({}, DEFAULTS, msg.payload.settings);
+		loadUI();
+		return;
+	}
+	if (msg.event !== "sendToPropertyInspector") return;
+	const p = msg.payload || {};
+	switch (p.type) {
+		case "status":
+			if (p.controller) setController(p.controller);
+			state.recording = p.recording; state.playing = p.playing;
+			if (p.recording) liveRec = [];
+			setStatus(null); break;
+		case "recording":
+			state.recording = true; liveRec = [];
+			setStatus({ key: "status.recordingHelp", extraKey: "status.devices", extraParams: { list: p.devices.join(", ") } });
+			renderRows(); break;
+		case "recordEvent":
+			if (liveRec) { liveRec.push(p.event); scheduleLiveRender(); }
+			break;
+		case "recorded":
+			state.recording = false; liveRec = null;
+			pushHistory();
+			if (p.slot && p.slot !== slot) selectSlot(p.slot);
+			setEvs(p.events);
+			renderRows(); setStatus({ key: "status.recorded", params: { n: p.events.length } });
+			break;
+		case "playing":
+			state.playing = p.playing; setStatus(null); break;
+		case "error": {
+			const key = "error." + p.code;
+			setStatus({ key: t(key) === key ? "error.unknown" : key, params: { code: p.code, detail: p.detail || "" }, cls: "error" });
+			break;
+		}
+	}
+}
+
+// msg = null shows the live state (recording / playing / ready).
+function setStatus(msg) {
+	statusMsg = msg;
+	renderStatus();
+}
+
+function renderStatus() {
+	const s = $("status");
+	const msg = statusMsg;
+	s.className = (msg && msg.cls) || (state.recording ? "recording" : state.playing ? "playing" : "");
+	if (state.recording && (!msg || !msg.cls)) {
+		let html = "<span class='dot'></span>" + escapeHtml(t("status.recording", { n: liveRec ? liveRec.length : 0 }));
+		if (msg && msg.key === "status.recordingHelp") html = "<span class='dot'></span>" + escapeHtml(t(msg.key));
+		if (msg && msg.extraKey) html += "<br><span class='hint'>" + escapeHtml(t(msg.extraKey, msg.extraParams)) + "</span>";
+		s.innerHTML = html;
+	} else if (msg) {
+		s.textContent = t(msg.key, msg.params);
+	} else {
+		s.textContent = t(state.playing ? "status.playing" : "status.ready");
+	}
+	$("btnRec").textContent = t(state.recording ? "rec.stop" : "rec.start");
+	$("btnPlay").textContent = t(state.playing ? "play.stop" : "play.test");
+	$("btnPlay").disabled = state.recording;
+}
+
+function loadUI() {
+	for (const id of ["speed", "repeat", "repeatDelay", "fixedDelay"]) $(id).value = settings[id];
+	$("useFixedDelay").checked = !!settings.useFixedDelay;
+	updateMouseOptionsUI();
+	$("layout").value = currentLayout();
+	$("lang").value = getStoredLanguage();
+	fillDatalist();
+	renderRows();
+	renderStatus();
+	loadAppearanceUI();
+}
+
+function fillDatalist() {
+	const layout = currentLayout();
+	$("keylist").innerHTML = Object.keys(KEYS)
+		.map((c) => `<option value="${escapeHtml(keyLabel(+c, layout))}">${keyName(+c)}</option>`).join("");
+}
+
+function escapeHtml(s) {
+	return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function totalMs(events) {
+	return events.reduce((a, e) => a + (e.disabled ? 0 : +e.delay || 0), 0);
+}
+
+// ---------------------------------------------------------------- events table
+function renderRows() {
+	const events = liveRec || evs();
+	refreshJson();
+	const tb = $("rows");
+	const ro = !!liveRec; // read-only while recording
+	const max = Math.max(1, ...events.map((e) => +e.delay || 0));
+	const layout = currentLayout();
+	$("total").textContent = t("total", { n: events.length, s: (totalMs(events) / 1000).toFixed(2) });
+	if (!events.length) {
+		tb.innerHTML = `<tr><td colspan="5" class="empty">${escapeHtml(t("empty"))}</td></tr>`;
+		return;
+	}
+	const dis = ro ? "disabled" : "";
+	// Columns 2-3 depend on the event type: key / mouse button, mouse move, wheel.
+	const xy = (e, lx, ly) => `<div class="xy">${lx}<input type="number" step="1" data-f="dx" value="${+e.dx || 0}" ${dis}/>
+		${ly}<input type="number" step="1" data-f="dy" value="${+e.dy || 0}" ${dis}/></div>`;
+	const cells = (e) => {
+		const type = e.type || "key";
+		if (type === "move") return `<td class="mouse-label">🖱 ${escapeHtml(t("ev.move"))}</td><td>${xy(e, "x", "y")}</td>`;
+		if (type === "wheel") return `<td class="mouse-label">🖱 ${escapeHtml(t("ev.wheel"))}</td><td>${xy(e, "↔", "↕")}</td>`;
+		return `<td class="key">
+				<input list="keylist" data-f="key" value="${escapeHtml(keyLabel(e.code, layout))}" ${dis}/>
+				<div class="kname">${keyName(e.code)} (${e.code})</div>
+			</td>
+			<td><button class="dir ${e.down ? "down" : "up"}" data-f="dir" ${dis}>${escapeHtml(t(e.down ? "dir.down" : "dir.up"))}</button></td>`;
+	};
+	// While recording, only the latest rows are drawn: a mouse gesture produces hundreds.
+	const first = ro ? Math.max(0, events.length - LIVE_ROWS) : 0;
+	tb.innerHTML = events.slice(first).map((e, j) => { const i = first + j; return `
+		<tr class="${e.disabled ? "disabled" : ""}" data-i="${i}">
+			<td class="idx"><input type="checkbox" data-f="enabled" title="${escapeHtml(t("title.enabled"))}" ${e.disabled ? "" : "checked"} ${dis}/></td>
+			${cells(e)}
+			<td class="delay">
+				<input type="number" min="0" step="10" data-f="delay" value="${+e.delay || 0}" ${dis}/>
+				<div class="bar" style="width:${Math.round(((+e.delay || 0) / max) * 64)}px"></div>
+			</td>
+			<td class="ops">${ro ? "" : `
+				<button class="icon" data-op="up" title="${escapeHtml(t("op.up"))}">▲</button><button class="icon" data-op="down" title="${escapeHtml(t("op.down"))}">▼</button><button class="icon" data-op="dup" title="${escapeHtml(t("op.dup"))}">⧉</button><button class="icon" data-op="del" title="${escapeHtml(t("op.del"))}">✕</button>`}
+			</td>
+		</tr>`; }).join("");
+}
+
+const LIVE_ROWS = 40;
+let liveRenderTimer = null;
+function scheduleLiveRender() {
+	if (liveRenderTimer) return;
+	liveRenderTimer = setTimeout(() => { liveRenderTimer = null; if (liveRec) { renderRows(); setStatus(null); } }, 100);
+}
+
+$("rows").addEventListener("change", (ev) => {
+	const tr = ev.target.closest("tr[data-i]"); if (!tr || liveRec) return;
+	const i = +tr.dataset.i, e = evs()[i], f = ev.target.dataset.f;
+	pushHistory();
+	if (f === "delay") e.delay = Math.max(0, Math.round(+ev.target.value || 0));
+	else if (f === "enabled") e.disabled = !ev.target.checked;
+	else if (f === "dx" || f === "dy") e[f] = Math.round(+ev.target.value || 0);
+	else if (f === "key") {
+		const code = parseKey(ev.target.value, currentLayout());
+		if (code == null) { setStatus({ key: "err.unknownKey", params: { key: ev.target.value }, cls: "error" }); history.pop(); }
+		else e.code = code;
+	}
+	save(); renderRows();
+});
+$("rows").addEventListener("click", (ev) => {
+	const btn = ev.target.closest("button"); if (!btn || liveRec) return;
+	const tr = btn.closest("tr[data-i]"); if (!tr) return;
+	const i = +tr.dataset.i, list = evs();
+	pushHistory();
+	if (btn.dataset.f === "dir") list[i].down = !list[i].down;
+	else if (btn.dataset.op === "del") list.splice(i, 1);
+	else if (btn.dataset.op === "dup") list.splice(i + 1, 0, Object.assign({}, list[i]));
+	else if (btn.dataset.op === "up" && i > 0) [list[i - 1], list[i]] = [list[i], list[i - 1]];
+	else if (btn.dataset.op === "down" && i < list.length - 1) [list[i + 1], list[i]] = [list[i], list[i + 1]];
+	else { history.pop(); return; }
+	save(); renderRows();
+});
+
+// ---------------------------------------------------------------- macro slots
+// Events of the macro being edited (created on first use).
+function evs() {
+	if (!Array.isArray(settings[slot])) settings[slot] = [];
+	return settings[slot];
+}
+function setEvs(list) { settings[slot] = list; }
+
+function setController(controller) {
+	isEncoder = controller === "Encoder";
+	document.body.classList.toggle("encoder", isEncoder);
+	if (!isEncoder && slot !== "events") selectSlot("events");
+}
+
+function selectSlot(name) {
+	slot = name;
+	$("slot").value = name;
+	history = []; // undo history belongs to one macro
+	refreshJson(true);
+	renderRows();
+}
+$("slot").onchange = () => selectSlot($("slot").value);
+
+// ---------------------------------------------------------------- tabs
+const TAB_STORAGE_KEY = "keymacro.tab";
+function showTab(name) {
+	if (!$("tab-" + name)) name = "macro";
+	document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+	document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.id === "tab-" + name));
+	try { sessionStorage.setItem(TAB_STORAGE_KEY, name); } catch (e) { /* ignore */ }
+}
+document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => showTab(b.dataset.tab)));
+// Default tab is "macro"; the last tab is remembered while the panel stays in the same session.
+showTab((() => { try { return sessionStorage.getItem(TAB_STORAGE_KEY); } catch (e) { return null; } })() || "macro");
+
+// ---------------------------------------------------------------- import / export
+// The text area mirrors the current macro, except while the user is editing it.
+let jsonDirty = false;
+function refreshJson(force) {
+	if (!force && (jsonDirty || document.activeElement === $("json"))) return;
+	// One event per line: compact, yet easy to read and edit.
+	const events = liveRec || evs();
+	$("json").value = "[\n" + events.map((e) => "  " + JSON.stringify(e)).join(",\n") + "\n]";
+	jsonDirty = false;
+}
+$("json").addEventListener("input", () => (jsonDirty = true));
+$("revertJson").onclick = () => refreshJson(true);
+
+// ---------------------------------------------------------------- controls
+$("btnRec").onclick = () => toPlugin(state.recording ? { cmd: "stopRecord" } : { cmd: "record", append: $("append").checked, slot, mouse: !!settings.recordMouse, mouseMove: settings.recordMouseMove !== false });
+$("btnPlay").onclick = () => toPlugin(state.playing ? { cmd: "stopPlay" } : { cmd: "play", settings, slot });
+
+for (const id of ["speed", "repeat", "repeatDelay", "fixedDelay"]) {
+	$(id).addEventListener("change", () => { settings[id] = Math.max(0, +$(id).value || 0); save(); });
+}
+$("useFixedDelay").onchange = () => { settings.useFixedDelay = $("useFixedDelay").checked; save(); };
+$("layout").onchange = () => { settings.layout = $("layout").value; save(); fillDatalist(); renderRows(); };
+
+$("addTap").onclick = () => {
+	pushHistory();
+	const code = 30;
+	evs().push({ code, down: true, delay: evs().length ? 50 : 0 }, { code, down: false, delay: 30 });
+	save(); renderRows();
+};
+$("addEv").onclick = () => {
+	pushHistory();
+	evs().push({ code: 30, down: true, delay: evs().length ? 50 : 0 });
+	save(); renderRows();
+};
+$("addMove").onclick = () => {
+	pushHistory();
+	evs().push({ type: "move", dx: 100, dy: 0, delay: evs().length ? 50 : 0 });
+	save(); renderRows();
+};
+$("addWheel").onclick = () => {
+	pushHistory();
+	evs().push({ type: "wheel", dx: 0, dy: -1, delay: evs().length ? 50 : 0 });
+	save(); renderRows();
+};
+// Removes mouse movements; their delays move to the next kept event so timing is unchanged.
+$("removeMoves").onclick = () => {
+	const list = evs();
+	if (!list.some((e) => e.type === "move")) return;
+	pushHistory();
+	const out = [];
+	let carry = 0;
+	for (const e of list) {
+		if (e.type === "move") { carry += +e.delay || 0; continue; }
+		out.push(Object.assign({}, e, { delay: (+e.delay || 0) + carry }));
+		carry = 0;
+	}
+	setEvs(out); save(); renderRows();
+};
+function updateMouseOptionsUI() {
+	$("recordMouse").checked = !!settings.recordMouse;
+	$("recordMouseMove").checked = settings.recordMouseMove !== false;
+	$("recordMouseMove").disabled = !settings.recordMouse;
+	$("recordMouseMoveLabel").classList.toggle("off", !settings.recordMouse);
+}
+$("recordMouse").onchange = () => { settings.recordMouse = $("recordMouse").checked; updateMouseOptionsUI(); save(); };
+$("recordMouseMove").onchange = () => { settings.recordMouseMove = $("recordMouseMove").checked; save(); };
+
+$("clear").onclick = () => {
+	if (!evs().length || !confirm(t("confirm.clear"))) return;
+	pushHistory(); setEvs([]); save(); renderRows();
+};
+function undo() {
+	if (!history.length) return;
+	setEvs(JSON.parse(history.pop())); save(); renderRows();
+}
+$("undo").onclick = undo;
+document.addEventListener("keydown", (e) => {
+	if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !/INPUT|TEXTAREA/.test(document.activeElement.tagName)) { e.preventDefault(); undo(); }
+});
+
+function bulk(fn) { pushHistory(); evs().forEach(fn); save(); renderRows(); }
+$("mul").onclick = () => { const k = +$("mulVal").value; bulk((e) => (e.delay = Math.round((+e.delay || 0) * k))); };
+$("setAll").onclick = () => { const v = Math.max(0, +$("setVal").value || 0); bulk((e, i) => (e.delay = i === 0 ? 0 : v)); };
+$("round").onclick = () => bulk((e) => (e.delay = Math.round((+e.delay || 0) / 10) * 10));
+$("clamp").onclick = () => { const v = Math.max(0, +$("clampVal").value || 0); bulk((e) => (e.delay = Math.min(+e.delay || 0, v))); };
+
+$("import").onclick = () => {
+	try {
+		const data = JSON.parse($("json").value);
+		const isKey = (e) => Number.isInteger(e.code) && typeof e.down === "boolean";
+		const isMouse = (e) => (e.type === "move" || e.type === "wheel") && Number.isFinite(+(e.dx || 0)) && Number.isFinite(+(e.dy || 0));
+		if (!Array.isArray(data) || !data.every((e) => e && (isMouse(e) || isKey(e))))
+			throw new Error(t("err.importFormat"));
+		pushHistory();
+		setEvs(data.map((e) => {
+			const base = isMouse(e)
+				? { type: e.type, dx: Math.round(+e.dx || 0), dy: Math.round(+e.dy || 0) }
+				: { code: e.code, down: e.down };
+			return { ...base, delay: Math.max(0, +e.delay || 0), ...(e.disabled ? { disabled: true } : {}) };
+		}));
+		jsonDirty = false;
+		save(); renderRows(); setStatus({ key: "status.imported", params: { n: data.length } });
+	} catch (err) { setStatus({ key: "err.import", params: { msg: err.message }, cls: "error" }); }
+};
+
+$("lang").onchange = () => {
+	storeLanguage($("lang").value);
+	setLanguage(detectLanguage(hostInfo));
+	loadUI();
+};
+
+// ---------------------------------------------------------------- appearance
+const AP_FIELDS = ["base", "fit", "zoom", "bg", "textSize", "textColor", "textPos", "font"];
+const AP_CHECKS = ["bold", "outline", "badge"];
+
+function appearance() {
+	return Object.assign({}, APPEARANCE_DEFAULTS, settings.appearance || {});
+}
+
+function loadAppearanceUI() {
+	const a = appearance();
+	for (const f of AP_FIELDS) $("ap-" + f).value = a[f];
+	for (const f of AP_CHECKS) $("ap-" + f).checked = !!a[f];
+	if (document.activeElement !== $("text")) $("text").value = a.text || "";
+	$("thumb").style.display = a.image ? "" : "none";
+	if (a.image) $("thumb").src = a.image;
+	document.body.classList.toggle("base-image", a.base === "image");
+	document.body.classList.toggle("base-color", a.base === "color");
+	renderPreviews(a);
+}
+
+async function renderPreviews(a) {
+	try {
+		for (let s = 0; s < STATE_COUNT; s++) await renderState($("pv" + s), a, s);
+	} catch (e) { setStatus({ key: "err.render", params: { msg: e.message }, cls: "error" }); }
+}
+
+let apTimer = null;
+function updateAppearance(patch) {
+	settings.appearance = Object.assign(appearance(), patch);
+	loadAppearanceUI();
+	clearTimeout(apTimer);
+	apTimer = setTimeout(async () => {
+		try {
+			// Present (even empty) "images" tells the backend that it manages the key image.
+			settings.images = await renderAllStates(appearance());
+			save();
+		} catch (e) { setStatus({ key: "err.render", params: { msg: e.message }, cls: "error" }); }
+	}, 250);
+}
+
+for (const f of AP_FIELDS) {
+	$("ap-" + f).addEventListener(f === "bg" || f === "textColor" ? "input" : "change", () => {
+		const v = $("ap-" + f).value;
+		updateAppearance({ [f]: ["zoom", "textSize"].includes(f) ? +v || APPEARANCE_DEFAULTS[f] : v });
+	});
+}
+for (const f of AP_CHECKS) $("ap-" + f).addEventListener("change", () => updateAppearance({ [f]: $("ap-" + f).checked }));
+$("text").addEventListener("input", () => updateAppearance({ text: $("text").value }));
+$("chooseImage").onclick = () => $("file").click();
+$("file").onchange = async () => {
+	const file = $("file").files[0];
+	$("file").value = "";
+	if (!file) return;
+	try { updateAppearance({ image: await readImageFile(file), base: "image" }); }
+	catch (e) { setStatus({ key: "err.image", cls: "error" }); }
+};
+$("removeImage").onclick = () => updateAppearance({ image: null });
+$("resetAppearance").onclick = () => updateAppearance(Object.assign({}, APPEARANCE_DEFAULTS));
+</script>
+</body>
+</html>

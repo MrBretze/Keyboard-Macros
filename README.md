@@ -37,11 +37,12 @@ The zip contains executables for Linux x86_64, Linux ARM64 (aarch64), Windows x8
 
 | Platform | Status |
 |---|---|
-| Linux (Wayland and X11, Flatpak and native OpenDeck) | Used and tested |
-| Windows 10 / 11 | Built and unit-tested automatically, not yet tried on a real machine |
+| Linux x86_64 | Tested with OpenDeck (Flatpak) on KDE Plasma, Wayland. X11 and native OpenDeck packages are expected to work but have not been tried. |
+| Linux ARM64 | Built and unit-tested automatically, not yet tried on a real machine |
+| Windows 10 / 11 | Tested on Windows with [Tacto](https://tacto.live) |
 | macOS 10.15+ | Built and unit-tested automatically, not yet tried on a real Mac. The executable is not signed by Apple, so macOS may refuse to start it. |
 
-The plugin follows the Stream Deck SDK, but it has only been used with OpenDeck, not with Elgato's Stream Deck software.
+The plugin follows the Stream Deck SDK. It has not been tried with Elgato's Stream Deck software.
 
 ### Building from source
 

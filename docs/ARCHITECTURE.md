@@ -133,9 +133,9 @@ A message for a key that has disappeared (page or profile change) is dropped: th
 |---|---|
 | `record`, `stopRecord` | Starts or stops a recording. A `stopRecord` with nothing to stop replies with `status`, so the editor resynchronises |
 | `play`, `stopPlay` | Starts or stops a test playback |
-| `status` | Replies with the recording and playing state, the controller type, the OS and the interface language |
+| `status` | Replies with the recording and playing state, the controller type, the OS, the interface language and `problems`: the missing setup (see below) |
 | `about`, `diagnostics` | Replies with the About tab information (including the connected decks) or the platform checks |
-| `openUrl` | Opens one of the About tab links. The editor sends a `target` (`repo`, `issues` or `license`), never a URL: the engine only opens its own known pages. |
+| `openUrl` | Opens one of the editor's links. The editor sends a `target` (`repo`, `issues`, `license` or `setup`, the setup guide at the section of the engine's OS), never a URL: the engine only opens its own known pages. |
 | `readLog`, `clearLog`, `openLogFolder` | Reads or clears the log, or opens its folder in the file manager |
 | `setDebug`, `setLanguage` | Changes the verbose log switch or the interface language, and saves the global settings. A language change is also sent to the editor of every key, so the editors OpenDeck keeps open follow it at once. |
 
@@ -144,6 +144,24 @@ A message for a key that has disappeared (page or profile change) is dropped: th
 OpenDeck keeps the editors it has already shown and displays them again without reloading them. The engine therefore sends `status` on `propertyInspectorDidAppear`, and the editor also asks for it when it becomes visible again, as a fallback.
 
 Errors are sent as **codes**, for example `uinput_failed` or `permission_accessibility`. The editor translates them, so the engine contains no user-facing text.
+
+## Missing setup
+
+`input::requirements()` checks, on each platform, what playback and recording need, and returns error codes:
+
+| Platform | Code | Meaning |
+|---|---|---|
+| Linux | `uinput_missing` | `/dev/uinput` does not exist: the kernel module is not loaded |
+| Linux | `uinput_denied` | No access to `/dev/uinput` (the user is not in the `input` group) |
+| Linux | `no_keyboards` | No keyboard can be read in `/dev/input` |
+| macOS | `permission_accessibility` | OpenDeck is not allowed to post input (Accessibility) |
+| macOS | `permission_input_monitoring` | OpenDeck is not allowed to listen to input (Input Monitoring) |
+| Windows | (none) | Nothing to check |
+
+The same codes are used for errors when a key is pressed or a recording starts, so the messages match.
+- **At startup**, the engine writes the missing setup to OpenDeck's log, with the guide's URL.
+- **In every status reply** (`problems`), the editor shows a red banner with each problem's message, saying what to do, and an "Open the setup guide" button (`openUrl` with target `setup`, which opens `docs/SETUP.md` at the right section).
+- **When the editor receives one of these errors**, it asks for the status again, so the banner appears even if the problem was found on a key press.
 
 ## Data
 

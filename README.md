@@ -27,7 +27,7 @@ macOS asks the first time the plugin needs them. Restart OpenDeck after allowing
 
 On **Windows**, nothing is needed. Windows does not let a normal program send input to a window running as administrator.
 
-If an access is missing, the editor shows what to fix, and the diagnostics of the About tab check it.
+If something is missing, the plugin's editor shows a red banner that says what to do, with a link to the **[setup guide](docs/SETUP.md)** for your system. The same check runs when OpenDeck starts and is written to OpenDeck's log.
 
 ## Installation
 
@@ -103,7 +103,7 @@ To report a security problem, open an issue on GitHub, without sensitive details
 
 ## Troubleshooting
 
-1. Open the **About** tab and click **Run checks**: every failing check explains what to fix.
+1. Follow the **[setup guide](docs/SETUP.md)**. The red banner in the plugin's editor links to it. Then open the **About** tab and click **Run checks**: every failing check explains what is still missing.
 2. Most problems on Linux come from the `input` group. After `sudo usermod -aG input $USER`, log out and back in (a restart of OpenDeck alone is not enough).
 3. If something still goes wrong, turn on **Verbose log (debug)**, reproduce the problem, then **Copy report** and paste it into a [GitHub issue](https://github.com/MrBretze/Keyboard-Macros/issues). Read it first: it may contain the keys you recorded.
 
@@ -165,6 +165,7 @@ Every push and pull request runs the tests and builds all platforms on GitHub Ac
 | `pi/keys.js` | Key table and per-platform key names |
 | `install.sh`, `install.ps1` | Build from source and install (Linux, Windows) |
 | `.github/workflows/release.yml` | Tests, builds and packages all platforms |
+| `docs/SETUP.md` | Setup guide (permissions, uinput module), linked from the editor's setup banner |
 | `docs/ARCHITECTURE.md` | How the plugin works inside OpenDeck |
 | `AGENTS.md`, `CLAUDE.md` | Instructions for AI coding agents (CLAUDE.md imports AGENTS.md) |
 | `rustfmt.toml` | Formatting settings |

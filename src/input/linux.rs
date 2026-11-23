@@ -51,8 +51,14 @@ pub struct VirtualInput {
     devices: Mutex<Devices>,
 }
 
+/// Maps a /dev/uinput error to the code the editor explains (with a link to the setup guide).
 fn uinput_error(e: std::io::Error) -> InputError {
-    InputError::new("uinput_failed", e)
+    let code = match e.kind() {
+        std::io::ErrorKind::NotFound => "uinput_missing", // module not loaded
+        std::io::ErrorKind::PermissionDenied => "uinput_denied", // not in the input group
+        _ => "uinput_failed",
+    };
+    InputError::new(code, e)
 }
 
 fn create_keyboard() -> Result<VirtualDevice, InputError> {
@@ -343,4 +349,17 @@ pub fn diagnostics() -> Vec<Value> {
     };
     checks.push(check("flatpak", None, detail));
     checks
+}
+
+/// Setup problems that prevent playback or recording, as error codes (empty when all is
+/// well). Checked each time an editor opens, so the user sees what to fix before trying.
+pub fn requirements() -> Vec<&'static str> {
+    let mut problems = Vec::new();
+    if let Err(e) = std::fs::OpenOptions::new().read(true).write(true).open("/dev/uinput") {
+        problems.push(uinput_error(e).code);
+    }
+    if open_devices(false).is_empty() {
+        problems.push("no_keyboards");
+    }
+    problems
 }

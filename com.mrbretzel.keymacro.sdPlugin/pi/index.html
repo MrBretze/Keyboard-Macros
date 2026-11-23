@@ -89,6 +89,12 @@
 	body.base-image .when-image, body.base-image .when-custom, body.base-color .when-custom { display: flex; }
 	.thumb { width: 28px; height: 28px; object-fit: cover; border-radius: 4px; box-shadow: 0 0 0 1px var(--line); }
 	.topbar { display: flex; gap: 8px; align-items: stretch; margin-bottom: 8px; }
+	.setup { background: rgba(229,72,77,.15); border: 1px solid rgba(229,72,77,.55); border-radius: 4px;
+		padding: 8px 10px; margin-bottom: 10px; }
+	.setup[hidden] { display: none; }
+	.setup-title { font-weight: 600; color: #ffb3b5; margin-bottom: 4px; }
+	.setup ul { margin: 4px 0 8px; padding-left: 18px; }
+	.setup li { margin: 3px 0; }
 	.topbar #status { flex: 1; min-width: 0; margin-top: 0; }
 	.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: 10px; flex-wrap: wrap; }
 	.tab { background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0;
@@ -121,6 +127,16 @@
 	<div class="topbar">
 		<div id="status"></div>
 		<button id="btnPlay" class="primary"></button>
+	</div>
+
+	<!-- Missing setup (permissions, kernel module): what to do, and a link to the guide. -->
+	<div id="setup" class="setup" role="alert" hidden>
+		<div class="setup-title" data-i18n="setup.title"></div>
+		<ul id="setupList"></ul>
+		<div class="row">
+			<button id="setupGuide" class="primary" data-i18n="setup.guide"></button>
+			<button id="setupRecheck" data-i18n="setup.recheck"></button>
+		</div>
 	</div>
 
 	<nav class="tabs" role="tablist">
@@ -417,6 +433,7 @@ function onMessage(msg) {
 			// regains focus); drop a stale one when nothing is recording.
 			if (p.recording && !liveRec) liveRec = [];
 			if (!p.recording) { liveRec = null; stopDone(); renderRows(); }
+			renderSetup(p.problems || []);
 			setStatus(null); break;
 		case "recording":
 			state.recording = true; liveRec = [];
@@ -440,6 +457,9 @@ function onMessage(msg) {
 		case "diagnostics": diagData = p.checks || []; renderDiagnostics(); break;
 		case "log": showLog(p.text || ""); break;
 		case "error": {
+			// A setup problem found while acting (key pressed, Record clicked): refresh the
+			// banner, which explains what to do.
+			if (SETUP_CODES.includes(p.code)) toPlugin({ cmd: "status" });
 			const key = "error." + p.code;
 			setStatus({ key: t(key) === key ? "error.unknown" : key, params: { code: p.code, detail: p.detail || "" }, cls: "error" });
 			break;
@@ -453,6 +473,7 @@ function followPluginLanguage(lang) {
 	setLanguagePreference(lang);
 	setLanguage(detectLanguage(hostInfo));
 	loadUI();
+	renderSetup(setupProblems);
 	if (aboutData) renderAbout();
 	if (diagData) renderDiagnostics();
 }
@@ -463,6 +484,20 @@ document.addEventListener("visibilitychange", () => {
 	if (document.visibilityState === "visible") toPlugin({ cmd: "status" });
 });
 window.addEventListener("focus", () => toPlugin({ cmd: "status" }));
+
+// ---------------------------------------------------------------- setup banner
+// Error codes that mean "the computer is not set up yet": shown in the banner with what
+// to do (their error.<code> text) and a link to the setup guide for this system.
+const SETUP_CODES = ["uinput_missing", "uinput_denied", "no_keyboards", "permission_accessibility", "permission_input_monitoring"];
+let setupProblems = [];
+
+function renderSetup(problems) {
+	setupProblems = problems.filter((code) => SETUP_CODES.includes(code));
+	$("setup").hidden = setupProblems.length === 0;
+	$("setupList").innerHTML = setupProblems.map((code) => `<li>${escapeHtml(t("error." + code, { detail: "" }))}</li>`).join("");
+}
+$("setupGuide").onclick = () => toPlugin({ cmd: "openUrl", target: "setup" });
+$("setupRecheck").onclick = () => toPlugin({ cmd: "status" });
 
 // msg = null shows the live state (recording / playing / ready).
 function setStatus(msg) {

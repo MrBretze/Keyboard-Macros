@@ -402,6 +402,11 @@ pub fn start_recording(
     }
 }
 
+/// Setup problems that prevent playback or recording: none to check on Windows.
+pub fn requirements() -> Vec<&'static str> {
+    Vec::new()
+}
+
 // ---------------------------------------------------------------- diagnostics
 
 /// Checks run from the About tab: tries to install (and immediately remove) the hooks

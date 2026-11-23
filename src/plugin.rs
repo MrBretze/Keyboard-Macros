@@ -11,7 +11,7 @@ use crate::common::{
     DEBUG, InputError, MacroEvent, Step, clear_log, log_path, open_folder, parse_steps, plugin_dir,
     read_log_tail,
 };
-use crate::input::{RecorderHandle, VirtualInput, diagnostics, start_recording};
+use crate::input::{RecorderHandle, VirtualInput, diagnostics, requirements, start_recording};
 use crate::recorder::RecordOptions;
 use crate::{debug_log, log};
 use base64::Engine;
@@ -78,11 +78,21 @@ pub enum Outgoing {
 /// The only pages the editor may ask to open: never a URL coming from the editor itself.
 const REPOSITORY_URL: &str = "https://github.com/MrBretze/Keyboard-Macros";
 
+fn setup_section() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "macos",
+        "windows" => "windows",
+        _ => "linux",
+    }
+}
+
 fn link_url(target: &str) -> Option<String> {
     Some(match target {
         "repo" => REPOSITORY_URL.to_owned(),
         "issues" => format!("{REPOSITORY_URL}/issues/new"),
         "license" => format!("{REPOSITORY_URL}/blob/main/LICENSE"),
+        // Setup guide, at the section of the system the plugin runs on.
+        "setup" => format!("{REPOSITORY_URL}/blob/main/docs/SETUP.md#{}", setup_section()),
         _ => return None,
     })
 }
@@ -785,7 +795,18 @@ impl Plugin {
             "language": st.globals.get("language").and_then(Value::as_str).unwrap_or("auto"),
         });
         drop(st);
+        let mut status = status;
+        // Missing setup (permissions, module): the editor shows what to do and the guide link.
+        status["problems"] = json!(requirements());
         self.to_pi(context, status);
+    }
+
+    /// At startup: report missing setup in OpenDeck's log, before anyone presses a key.
+    pub fn log_requirements(&self) {
+        let problems = requirements();
+        if !problems.is_empty() {
+            log!("setup needed ({}): see {}", problems.join(", "), link_url("setup").unwrap_or_default());
+        }
     }
 
     /// Called when the connection ends: stop everything and release held keys.
@@ -826,6 +847,7 @@ mod tests {
         assert_eq!(link_url("repo").as_deref(), Some(REPOSITORY_URL));
         assert!(link_url("issues").unwrap().starts_with(REPOSITORY_URL));
         assert!(link_url("license").unwrap().starts_with(REPOSITORY_URL));
+        assert!(link_url("setup").unwrap().contains("/docs/SETUP.md#"));
         assert_eq!(link_url("https://example.com"), None);
         assert_eq!(link_url(""), None);
     }

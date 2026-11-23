@@ -127,7 +127,10 @@ impl GlobalEventHandler for GlobalHandler {
     async fn plugin_ready(&self) -> OpenActionResult<()> {
         let decks =
             openaction::get_connected_devices().await.into_iter().map(|(id, d)| (id, d.name)).collect();
-        blocking(|| self.0.set_decks(decks));
+        blocking(|| {
+            self.0.set_decks(decks);
+            self.0.log_requirements();
+        });
         openaction::get_global_settings().await
     }
 

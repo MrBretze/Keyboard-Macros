@@ -566,6 +566,20 @@ pub fn start_recording(
     }
 }
 
+/// Setup problems that prevent playback or recording: the two privacy permissions.
+pub fn requirements() -> Vec<&'static str> {
+    // SAFETY: plain permission queries, without prompting.
+    let (post, listen) = unsafe { (CGPreflightPostEventAccess(), CGPreflightListenEventAccess()) };
+    let mut problems = Vec::new();
+    if !post {
+        problems.push("permission_accessibility");
+    }
+    if !listen {
+        problems.push("permission_input_monitoring");
+    }
+    problems
+}
+
 // ---------------------------------------------------------------- diagnostics
 
 /// Checks run from the About tab. `ok` is null for information-only lines.

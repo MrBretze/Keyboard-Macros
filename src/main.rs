@@ -11,6 +11,7 @@
 mod common;
 mod host;
 mod input;
+mod notify;
 mod plugin;
 mod recorder;
 
@@ -53,7 +54,12 @@ fn main() {
         common::set_log_sink(Box::new(move |line| {
             let _ = log_queue.send(plugin::Outgoing::LogMessage { message: line.to_owned() });
         }));
-        let plugin = plugin::Plugin::new(queue);
+        // OpenDeck's interface language, for the texts the engine shows itself.
+        let host_language = flag("-info")
+            .and_then(|info| serde_json::from_str::<serde_json::Value>(info).ok())
+            .and_then(|info| info.pointer("/application/language")?.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        let plugin = plugin::Plugin::new(queue, host_language);
         tokio::spawn(host::deliver(outgoing));
         host::install(plugin.clone()).await;
         // Connects, registers, then handles OpenDeck's events until the connection closes.

@@ -43,6 +43,11 @@ const SETUP_CODES: [&str; 5] = [
     "permission_input_monitoring",
 ];
 
+/// True for the error codes that mean "the computer is not set up for the plugin".
+pub fn is_setup_code(code: &str) -> bool {
+    SETUP_CODES.contains(&code)
+}
+
 /// Developer aid: `KEYMACRO_SIMULATE_SETUP=uinput_denied,no_keyboards` makes the plugin behave
 /// as if these setup problems were present (banner, errors on key press and on record),
 /// without touching the system's permissions. Unknown codes are ignored.

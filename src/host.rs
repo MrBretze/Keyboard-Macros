@@ -187,6 +187,7 @@ fn describe(message: &Outgoing) -> String {
         Outgoing::ShowOk { context } => format!("showOk {context}"),
         Outgoing::OpenUrl { url } => format!("openUrl {url}"),
         Outgoing::LogMessage { message } => format!("logMessage {message}"),
+        Outgoing::SetupNotification { problems, .. } => format!("setup notification {}", problems.join(", ")),
     }
 }
 
@@ -195,6 +196,17 @@ async fn deliver_one(message: Outgoing) -> OpenActionResult<()> {
         Outgoing::SetGlobalSettings { settings } => return openaction::set_global_settings(settings).await,
         Outgoing::OpenUrl { url } => return openaction::open_url(url.clone()).await,
         Outgoing::LogMessage { message } => return openaction::log_message(message.clone()).await,
+        Outgoing::SetupNotification { problems, french } => {
+            // Runs on its own: it waits for clicks for the rest of the session.
+            let url = crate::plugin::link_url("setup").unwrap_or_default();
+            tokio::spawn(crate::notify::show_setup(problems.clone(), *french, move || {
+                let url = url.clone();
+                tokio::spawn(async move {
+                    let _ = openaction::open_url(url).await;
+                });
+            }));
+            return Ok(());
+        }
         Outgoing::ToAllEditors { payload } => {
             for instance in openaction::visible_instances(ACTION_UUID).await {
                 instance.send_to_property_inspector(payload).await?;
@@ -222,7 +234,8 @@ async fn deliver_one(message: Outgoing) -> OpenActionResult<()> {
         Outgoing::SetGlobalSettings { .. }
         | Outgoing::ToAllEditors { .. }
         | Outgoing::OpenUrl { .. }
-        | Outgoing::LogMessage { .. } => Ok(()),
+        | Outgoing::LogMessage { .. }
+        | Outgoing::SetupNotification { .. } => Ok(()),
     }
 }
 

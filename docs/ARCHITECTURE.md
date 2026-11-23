@@ -160,6 +160,7 @@ Errors are sent as **codes**, for example `uinput_failed` or `permission_accessi
 
 The same codes are used for errors when a key is pressed or a recording starts, so the messages match.
 - **At startup**, the engine writes the missing setup to OpenDeck's log, with the guide's URL.
+- **On Linux, a desktop notification** appears right away, without opening the plugin's settings. It is sent once per session, when the global settings arrive (so the language is known) or at the first key press or recording that fails. It lists each problem and its fix, with an "Open the setup guide" button. Inside the OpenDeck Flatpak it goes through the notification portal (`org.freedesktop.portal.Notification`) and shows as coming from OpenDeck; otherwise it uses `org.freedesktop.Notifications`. A click on it opens the guide through OpenDeck (`openUrl`). Its texts are in `src/notify.rs`, in English and French, following the plugin's language, else OpenDeck's, else the system's.
 - **In every status reply** (`problems`), the editor shows a red banner with each problem's message, saying what to do, and an "Open the setup guide" button (`openUrl` with target `setup`, which opens `docs/SETUP.md` at the right section).
 - **When the editor receives one of these errors**, it asks for the status again, so the banner appears even if the problem was found on a key press.
 
@@ -206,4 +207,5 @@ A recorded movement merges the mouse reports of about 12 ms; `n` is how many. Pl
 | `src/plugin.rs` | Events, playback, dial queue, recording control, images, editor commands |
 | `src/recorder.rs` | Platform-independent recording logic |
 | `src/common.rs` | Event format, key codes, logging |
+| `src/notify.rs` | Desktop notification about missing setup (Linux) |
 | `src/input/linux.rs`, `windows.rs`, `macos.rs` | Simulation, capture and diagnostics for each system |

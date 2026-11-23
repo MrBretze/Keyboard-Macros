@@ -27,7 +27,7 @@ macOS asks the first time the plugin needs them. Restart OpenDeck after allowing
 
 On **Windows**, nothing is needed. Windows does not let a normal program send input to a window running as administrator.
 
-If something is missing, the plugin's editor shows a red banner that says what to do, with a link to the **[setup guide](docs/SETUP.md)** for your system. The same check runs when OpenDeck starts and is written to OpenDeck's log.
+If something is missing, you are told right away. On Linux, a **desktop notification** appears when OpenDeck starts. The plugin's editor also shows a red banner. Both say what to do and link to the **[setup guide](docs/SETUP.md)** for your system. The same check runs when OpenDeck starts and is written to OpenDeck's log.
 
 ## Installation
 
@@ -158,6 +158,7 @@ Every push and pull request runs the tests and builds all platforms on GitHub Ac
 | `src/input/linux.rs`, `windows.rs`, `macos.rs` | Keyboard and mouse simulation, capture and diagnostics for each OS |
 | `src/host.rs` | Connection to OpenDeck through the [`openaction`](https://crates.io/crates/openaction) crate |
 | `src/common.rs` | Shared helpers: macro format, key codes, logging |
+| `src/notify.rs` | Desktop notification about missing setup (Linux) |
 | `com.mrbretzel.keymacro.sdPlugin/` | The plugin folder: `manifest.json`, icons, editor (`pi/`) and plugin name translations (`lang/`) |
 | `pi/index.html` | Editor (Property Inspector) |
 | `pi/i18n.js`, `pi/locales/*.js` | Editor translations |

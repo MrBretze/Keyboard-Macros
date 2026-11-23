@@ -12,8 +12,8 @@ use crate::common::{
     read_log_tail,
 };
 use crate::input::{
-    RecorderHandle, VirtualInput, diagnostics, requirements, simulated_playback_error, simulated_problems,
-    simulated_recording_error, start_recording,
+    RecorderHandle, VirtualInput, diagnostics, is_setup_code, requirements, simulated_playback_error,
+    simulated_problems, simulated_recording_error, start_recording,
 };
 use crate::recorder::RecordOptions;
 use crate::{debug_log, log};
@@ -76,6 +76,11 @@ pub enum Outgoing {
     LogMessage {
         message: String,
     },
+    /// Desktop notification about missing setup, with a button to the setup guide.
+    SetupNotification {
+        problems: Vec<&'static str>,
+        french: bool,
+    },
 }
 
 /// The only pages the editor may ask to open: never a URL coming from the editor itself.
@@ -89,7 +94,7 @@ fn setup_section() -> &'static str {
     }
 }
 
-fn link_url(target: &str) -> Option<String> {
+pub(crate) fn link_url(target: &str) -> Option<String> {
     Some(match target {
         "repo" => REPOSITORY_URL.to_owned(),
         "issues" => format!("{REPOSITORY_URL}/issues/new"),
@@ -203,6 +208,11 @@ struct State {
 
 pub struct Plugin {
     out: UnboundedSender<Outgoing>,
+    /// OpenDeck's interface language (from the `-info` launch argument), for the texts the
+    /// engine shows itself (setup notification).
+    host_language: String,
+    /// The setup notification is shown once per session.
+    setup_notified: std::sync::atomic::AtomicBool,
     input: VirtualInput,
     state: Mutex<State>,
     default_icons: Vec<Option<String>>,
@@ -222,9 +232,11 @@ fn has_events(s: Option<&Value>, slot: &str) -> bool {
 }
 
 impl Plugin {
-    pub fn new(out: UnboundedSender<Outgoing>) -> Arc<Self> {
+    pub fn new(out: UnboundedSender<Outgoing>, host_language: String) -> Arc<Self> {
         Arc::new(Self {
             out,
+            host_language,
+            setup_notified: std::sync::atomic::AtomicBool::new(false),
             input: VirtualInput::default(),
             state: Mutex::new(State::default()),
             default_icons: STATE_ICONS.iter().map(|p| load_data_url(p)).collect(),
@@ -415,6 +427,9 @@ impl Plugin {
             log!("play error: {e}");
             self.error(context, e.code, &e.detail);
             self.alert(context);
+            if is_setup_code(e.code) {
+                self.notify_setup();
+            }
         }
         self.input.release_all();
         // Unregister and reset the key under one lock: a new playback can only start once
@@ -554,6 +569,9 @@ impl Plugin {
                 drop(st);
                 log!("record error: {e}");
                 self.error(context, e.code, &e.detail);
+                if is_setup_code(e.code) {
+                    self.notify_setup();
+                }
             }
         }
     }
@@ -682,6 +700,31 @@ impl Plugin {
         let globals = if settings.is_object() { settings.clone() } else { json!({}) };
         DEBUG.store(globals.get("debug").and_then(Value::as_bool).unwrap_or(false), Ordering::Relaxed);
         self.lock().globals = globals;
+        // The language is known now: tell the user right away if the computer is not set up.
+        self.notify_setup();
+    }
+
+    /// True if the texts the engine shows itself should be in French: the language chosen
+    /// in the plugin, else OpenDeck's, else the system's.
+    fn ui_is_french(&self) -> bool {
+        let chosen = self.lock().globals.get("language").and_then(Value::as_str).unwrap_or("auto").to_owned();
+        let language = if chosen != "auto" {
+            chosen
+        } else if !self.host_language.is_empty() {
+            self.host_language.clone()
+        } else {
+            std::env::var("LANG").unwrap_or_default()
+        };
+        language.to_ascii_lowercase().starts_with("fr")
+    }
+
+    /// Shows the desktop notification about missing setup, once per session.
+    fn notify_setup(&self) {
+        let problems = requirements();
+        if problems.is_empty() || self.setup_notified.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        self.send(Outgoing::SetupNotification { problems, french: self.ui_is_french() });
     }
 
     /// Commands sent by the property inspector (`sendToPlugin`).

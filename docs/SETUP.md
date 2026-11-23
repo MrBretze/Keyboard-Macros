@@ -76,7 +76,7 @@ Then open the plugin's editor. The red banner should be gone. If it is still the
 
 ### OpenDeck installed as a Flatpak
 
-Nothing else is needed. The OpenDeck Flatpak already has access to the input devices, and the plugin uses your account's permissions.
+No extra step compared with the steps above: the OpenDeck Flatpak already exposes the input devices, and the plugin uses your account's permissions.
 
 ## macOS
 

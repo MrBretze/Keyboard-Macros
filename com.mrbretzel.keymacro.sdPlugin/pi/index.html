@@ -92,6 +92,10 @@
 	.setup { background: rgba(229,72,77,.15); border: 1px solid rgba(229,72,77,.55); border-radius: 4px;
 		padding: 8px 10px; margin-bottom: 10px; }
 	.setup[hidden] { display: none; }
+	/* Macros cannot play at all: show only the setup message, no tabs. */
+	body.setup-blocked .topbar, body.setup-blocked .tabs, body.setup-blocked .panel.active { display: none; }
+	body.setup-blocked .setup { margin-top: 4px; padding: 14px 16px; }
+	body.setup-blocked .setup-title { font-size: 14px; }
 	.setup-title { font-weight: 600; color: #ffb3b5; margin-bottom: 4px; }
 	.setup ul { margin: 4px 0 8px; padding-left: 18px; }
 	.setup li { margin: 3px 0; }
@@ -491,9 +495,15 @@ window.addEventListener("focus", () => toPlugin({ cmd: "status" }));
 const SETUP_CODES = ["uinput_missing", "uinput_denied", "no_keyboards", "permission_accessibility", "permission_input_monitoring"];
 let setupProblems = [];
 
+// Problems that make playback impossible: the editor then shows only the setup message.
+// When only recording is impossible, the editor stays usable (macros typed by hand or
+// imported still play), with the banner above it.
+const BLOCKING_CODES = ["uinput_missing", "uinput_denied", "permission_accessibility"];
+
 function renderSetup(problems) {
 	setupProblems = problems.filter((code) => SETUP_CODES.includes(code));
 	$("setup").hidden = setupProblems.length === 0;
+	document.body.classList.toggle("setup-blocked", setupProblems.some((code) => BLOCKING_CODES.includes(code)));
 	$("setupList").innerHTML = setupProblems.map((code) => `<li>${escapeHtml(t("error." + code, { detail: "" }))}</li>`).join("");
 }
 $("setupGuide").onclick = () => toPlugin({ cmd: "openUrl", target: "setup" });

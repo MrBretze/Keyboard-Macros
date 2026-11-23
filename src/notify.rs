@@ -91,11 +91,14 @@ mod linux {
             let notification: HashMap<&str, Variant> = HashMap::from([
                 ("title", Variant::from(texts.title)),
                 ("body", Variant::from(body.as_str())),
-                ("priority", Variant::from("high")),
+                // Urgent: the desktop keeps it on screen until it is dismissed, since the
+                // plugin cannot work until the user acts.
+                ("priority", Variant::from("urgent")),
                 ("default-action", Variant::from(ACTION)),
                 ("buttons", Variant::from(vec![button])),
             ]);
             proxy.call_method("AddNotification", &(NOTIFICATION_ID, notification)).await?;
+            crate::log!("setup notification sent to the desktop (notification portal)");
             // ActionInvoked(app_id, notification_id, action, parameter)
             while let Some(signal) = clicks.next().await {
                 if let Ok((_, id, action, _)) =
@@ -134,6 +137,7 @@ mod linux {
                 )
                 .await?;
             let id: u32 = reply.body().deserialize()?;
+            crate::log!("setup notification sent to the desktop (notification id {id})");
             // ActionInvoked(id, action_key)
             while let Some(signal) = clicks.next().await {
                 if let Ok((clicked, _)) = signal.body().deserialize::<(u32, String)>()

@@ -163,6 +163,8 @@ The same codes are used for errors when a key is pressed or a recording starts, 
 - **In every status reply** (`problems`), the editor shows a red banner with each problem's message, saying what to do, and an "Open the setup guide" button (`openUrl` with target `setup`, which opens `docs/SETUP.md` at the right section).
 - **When the editor receives one of these errors**, it asks for the status again, so the banner appears even if the problem was found on a key press.
 
+To see all this without changing the system's permissions, set the `KEYMACRO_SIMULATE_SETUP` environment variable to a comma-separated list of these codes, for example `uinput_denied,no_keyboards`. The engine then reports them, refuses playback or recording with them, and logs that it is simulating them. With the OpenDeck Flatpak, run `flatpak override --user --env=KEYMACRO_SIMULATE_SETUP=uinput_denied,no_keyboards me.amankhanna.opendeck`, then restart OpenDeck. Undo it with `flatpak override --user --unset-env=KEYMACRO_SIMULATE_SETUP me.amankhanna.opendeck`.
+
 ## Data
 
 **Action settings**, stored by OpenDeck in its profile files, as plain text:

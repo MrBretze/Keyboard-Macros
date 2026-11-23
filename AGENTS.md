@@ -57,9 +57,12 @@ cargo audit                                              # known vulnerabilities
   Messages for keys that are no longer visible are dropped, because the crate only knows visible instances.
 - **Plugin state.** `src/plugin.rs` keeps all mutable state behind one `Mutex<State>`. Playback runs on its own thread per key. Key state changes that must not race (end of playback) go through `set_state_locked`. Delays from settings are user-controlled: always go through `bounded_delay`, and use saturating arithmetic on values from settings or the OS.
 - **Setup problems.** `input::requirements()` (per platform) returns setup error codes such as `uinput_missing`, `uinput_denied`, `no_keyboards` and `permission_*`. They are sent in every `status` as `problems`, shown by the editor's red setup banner (`SETUP_CODES` in `index.html`) with a link to `docs/SETUP.md`, and logged at startup. A new setup code needs:
-  1. its `error.<code>` text, saying what to do;
+  1. its `error.<code>` text, saying what to do, plus an entry in `SETUP_CODES` in `src/input/mod.rs` (simulation);
   2. an entry in `SETUP_CODES`;
   3. a section in `docs/SETUP.md`.
+- **Simulating missing setup.** `KEYMACRO_SIMULATE_SETUP=uinput_denied,no_keyboards` (any setup codes) makes the engine behave as if they were missing: banner, error on key press and on record, startup log. Nothing on the system changes. For the OpenDeck Flatpak:
+  - `flatpak override --user --env=KEYMACRO_SIMULATE_SETUP=... me.amankhanna.opendeck`, then restart OpenDeck;
+  - undo it with `--unset-env=KEYMACRO_SIMULATE_SETUP`.
 - **Errors are codes, not text.** The engine sends `{"type":"error","code":...}`. Every code needs an `error.<code>` entry in both `pi/locales/en.js` and `fr.js`. The engine contains no user-facing strings.
 - **Global settings.** They hold `language` and `debug`. OpenDeck replaces the whole object on save, so always change them through `Plugin::set_global`, which saves the full object. A language change is broadcast to every key's editor (`broadcast_to_editors`), because OpenDeck keeps already-shown editors alive without reloading them.
 - **Custom key images.** They are rendered by the editor (`pi/appearance.js`, canvas), because the engine has no graphics library. They are stored in the action settings as `images: {"0","1","2"}`, one per state (idle, playing, recording). The engine only forwards them with `setImage`, and `setFeedback` for dials. A missing `images` key means "never customised: do not override OpenDeck's own image".

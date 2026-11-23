@@ -11,7 +11,10 @@ use crate::common::{
     DEBUG, InputError, MacroEvent, Step, clear_log, log_path, open_folder, parse_steps, plugin_dir,
     read_log_tail,
 };
-use crate::input::{RecorderHandle, VirtualInput, diagnostics, requirements, start_recording};
+use crate::input::{
+    RecorderHandle, VirtualInput, diagnostics, requirements, simulated_playback_error, simulated_problems,
+    simulated_recording_error, start_recording,
+};
 use crate::recorder::RecordOptions;
 use crate::{debug_log, log};
 use base64::Engine;
@@ -338,6 +341,9 @@ impl Plugin {
         let needs_keyboard = steps.iter().any(
             |st| matches!(st.event, MacroEvent::Key { code, .. } if !crate::common::is_mouse_button(code)),
         );
+        if let Some(e) = simulated_playback_error() {
+            return Err(e); // KEYMACRO_SIMULATE_SETUP (developer aid)
+        }
         self.input.prepare(needs_keyboard, needs_mouse)?;
         // Absolute deadlines, so that the time spent sending input does not accumulate.
         debug_log!("play {} steps (speed {:.0}%, fixed delay: {use_fixed})", steps.len(), speed * 100.0);
@@ -532,7 +538,11 @@ impl Plugin {
         let on_stop = Box::new(move |events: Vec<Value>| this.finish_recording(&ctx, append, slot, events));
         // The state lock is held until the handle is stored, so finish_recording (another
         // thread) always runs after this.
-        match start_recording(options, on_event, on_stop) {
+        let started = match simulated_recording_error() {
+            Some(e) => Err(e), // KEYMACRO_SIMULATE_SETUP (developer aid)
+            None => start_recording(options, on_event, on_stop),
+        };
+        match started {
             Ok((handle, devices)) => {
                 st.recorder = Some(handle);
                 st.recording_ctx = Some(context.to_owned());
@@ -803,6 +813,9 @@ impl Plugin {
 
     /// At startup: report missing setup in OpenDeck's log, before anyone presses a key.
     pub fn log_requirements(&self) {
+        if !simulated_problems().is_empty() {
+            log!("KEYMACRO_SIMULATE_SETUP is set: simulating {}", simulated_problems().join(", "));
+        }
         let problems = requirements();
         if !problems.is_empty() {
             log!("setup needed ({}): see {}", problems.join(", "), link_url("setup").unwrap_or_default());

@@ -1,6 +1,6 @@
 [package]
 name = "keymacro"
-version = "2.2.0"
+version = "2.2.1"
 edition = "2024"
 rust-version = "1.89" # required by zbus 6
 description = "OpenDeck plugin: record, edit and replay keyboard and mouse macros"

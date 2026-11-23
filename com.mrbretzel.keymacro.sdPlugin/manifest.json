@@ -3,7 +3,7 @@
 	"Description": "Record, edit (timing included) and replay keyboard macros.",
 	"Author": "MrBretzel",
 	"URL": "https://github.com/MrBretze/Keyboard-Macros",
-	"Version": "2.2.0",
+	"Version": "2.2.1",
 	"SDKVersion": 2,
 	"Icon": "icons/plugin",
 	"Category": "Keyboard Macros",
